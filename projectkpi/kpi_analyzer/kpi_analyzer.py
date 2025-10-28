@@ -1,3 +1,4 @@
+# kpi_analyzer/kpi_analyzer.py
 import re
 from math import ceil
 from datetime import datetime
@@ -5,7 +6,7 @@ from django.db.models import Q
 from typing import Dict, List, Optional
 from django.utils import timezone
 from .models import KpiPlan
-2
+
 OP_ANALYZE_KPI_V2_SHEET_NAME = 'Анализ KPI'
 ROW_TITLE_CATEGORY = "Категория"
 ROW_TITLE_OFFER = "Оффер"
@@ -14,19 +15,14 @@ ROW_TITLE_OPERATOR = "Оператор"
 CALLS_COUNT_FOR_ANALYZE = 30
 BLANK_KEY = ""
 
-
 def safe_div(a: float, b: float) -> float:
-    """Безопасное деление, возвращает 0, если делитель равен 0."""
     return a / b if b != 0 else 0
 
 def print_float(value: Optional[float]) -> str:
-    """Форматирование числа с плавающей точкой."""
     return f"{value:.2f}" if value is not None else BLANK_KEY
 
 def print_percent(prefix: str, numerator: float, denominator: float, suffix: str) -> str:
-    """Форматирование процента."""
     return f"{prefix}{safe_div(numerator, denominator) * 100:.2f}%{suffix}" if denominator > 0 else BLANK_KEY
-
 
 class Timesheet:
     def __init__(self, minutes_per_period=5):
@@ -37,32 +33,22 @@ class Timesheet:
         self.minutes_per_period = minutes_per_period
 
     def push_call(self, operator, created_at, duration):
-        """
-        Учесть звонок в расчёте времени.
-        :param operator: Идентификатор оператора
-        :param created_at: Временная метка звонка (строка, например, "2022-09-10 20:08:01")
-        :param duration: Длительность звонка в секундах
-        """
         pattern = r"(\d{4}-\d{2}-\d{2} \d{1,2}):(\d{2})"
         match = re.match(pattern, created_at)
         if not match:
             raise ValueError("Неверный формат времени")
-
         prefix = match.group(1)
         minutes = int(match.group(2))
         minutes_round = minutes // self.minutes_per_period
         key = f"[{operator}][{prefix}][{minutes_round}]"
-
         if operator not in self.operators:
             self.operators[operator] = 1
             self.operators_count += 1
         else:
             self.operators[operator] += 1
-
         working_interval = ceil((duration / 60) / self.minutes_per_period)
         if working_interval < 1:
             working_interval = 1
-
         if key not in self.calls:
             self.calls[key] = working_interval
             self.working_interval_count += working_interval
@@ -131,7 +117,7 @@ class KpiStat:
     def push_call(self, call):
         self.calls_group_effective_count += 1
 
-    def finalyze(self, kpi_list):
+    def finalyze(self, kpi_plans):
         self.effective_rate = safe_div(self.leads_effective_count, self.calls_group_effective_count)
         self.effective_percent = self.effective_rate * 100
 
@@ -194,15 +180,13 @@ class CommonItem:
         self.kpi_confirmation_price_need_correction = True
         self.kpi_confirmation_price_need_correction_str = comment
 
-    def finalyze(self, kpi_list):
-        self.kpi_stat.finalyze(kpi_list)
+    def finalyze(self, kpi_plans):
+        self.kpi_stat.finalyze(kpi_plans)
         self.lead_container.finalyze()
         self.kpi_operator_effeciency_fact = self.kpi_stat.effective_rate
-
         if self.kpi_current_plan:
             self.expecting_approve_leads = self.lead_container.leads_non_trash_count * self.kpi_current_plan.planned_approve
             self.expecting_buyout_leads = self.lead_container.leads_approved_count * self.kpi_current_plan.planned_buyout
-
         if not self.kpi_current_plan:
             self.set_kpi_eff_need_correction("KPI не найден")
         elif not self.recommended_effeciency or self.recommended_effeciency.value is None:
@@ -228,7 +212,7 @@ class ItemCategory:
         self.expecting_approve_leads = 0
         self.approve_rate_plan = None
         self.recommended_approve = Recommendation(None, "")
-        self.expecting_buyout_leads =col = 0
+        self.expecting_buyout_leads = 0
         self.buyout_rate_plan = None
         self.buyout_percent_fact = None
         self.recommended_buyout = Recommendation(None, "")
@@ -249,9 +233,6 @@ class ItemCategory:
 
     def push_lead(self, lead: Lead):
         if lead.offer_id not in self.offer:
-
-
-
             self.offer[lead.offer_id] = CommonItem(str(lead.offer_id), lead.offer_name)
         if lead.aff_id not in self.aff:
             self.aff[lead.aff_id] = CommonItem(str(lead.aff_id), "")
@@ -274,27 +255,48 @@ class ItemCategory:
         self.operator[call.lv_operator].push_call(call)
         self.kpi_stat.push_call(call)
 
-    def finalyze(self, kpi_list):
-        self.kpi_stat.finalyze(kpi_list)
+    def finalyze(self, kpi_plans):
+        self.kpi_stat.finalyze(kpi_plans)
         self.lead_container.finalyze()
         for operator in self.operator.values():
-            operator.finalyze(kpi_list)
+            operator.finalyze(kpi_plans)
         self.operator_sorted = OpAnalyzeKpiV2.sort_to_array_operators(self.operator)
         self.operator_recommended = OpAnalyzeKpiV2.get_operators_for_recommendations(self.operator_sorted)
         self.recommended_effeciency = OpAnalyzeKpiV2.get_recommended_effeciency(self.operator_sorted, self.operator_recommended.value)
         self.approve_percent_fact = safe_div(self.lead_container.leads_approved_count, self.lead_container.leads_non_trash_count) * 100
         self.buyout_percent_fact = safe_div(self.lead_container.leads_buyout_count, self.lead_container.leads_approved_count) * 100
 
+        import re
+        current_date = timezone.now().strftime("%Y-%m-%d")
+
         for offer in self.offer.values():
-            offer.kpi_current_plan = kpi_list.find_kpi(None, str(offer.key), datetime.now().strftime("%Y-%m-%d"))
+            match = re.search(r'\[(\d+)\]', offer.key)
+            if match:
+                offer_id = int(match.group(1))
+            else:
+
+                offer_id = None
+
+            if offer_id is not None:
+                offer.kpi_current_plan = kpi_plans.filter(
+                    offer_id=offer_id,
+                    update_date=current_date
+                ).first()
+            else:
+                offer.kpi_current_plan = None
+
             offer.recommended_effeciency = self.recommended_effeciency
-            offer.finalyze(kpi_list)
+            offer.finalyze(kpi_plans)
+
             if offer.kpi_current_plan:
-                self.max_confirmation_price = max(self.max_confirmation_price, offer.kpi_current_plan.confirmation_price)
+                self.max_confirmation_price = max(self.max_confirmation_price,
+                                                  offer.kpi_current_plan.confirmation_price)
+
             if offer.expecting_approve_leads is not None:
                 self.expecting_approve_leads = (self.expecting_approve_leads or 0) + offer.expecting_approve_leads
             else:
                 self.expecting_approve_leads = None
+
             if offer.expecting_buyout_leads is not None:
                 self.expecting_buyout_leads = (self.expecting_buyout_leads or 0) + offer.expecting_buyout_leads
             else:
@@ -302,28 +304,23 @@ class ItemCategory:
 
         if self.expecting_approve_leads:
             self.approve_rate_plan = safe_div(self.expecting_approve_leads, self.lead_container.leads_non_trash_count)
-            perhaps_app_count = ((self.lead_container.leads_approved_count / (self.kpi_stat.effective_percent / 100))
-                                - self.lead_container.leads_approved_count) * 0.3 + self.lead_container.leads_approved_count
+            perhaps_app_count = ((self.lead_container.leads_approved_count / (self.kpi_stat.effective_percent / 100)) - self.lead_container.leads_approved_count) * 0.3 + self.lead_container.leads_approved_count
             self.recommended_approve = Recommendation(
                 safe_div(perhaps_app_count, self.lead_container.leads_non_trash_count) * 100,
                 f"Текущая эффективность: {self.kpi_stat.effective_percent}, коррекция -> вероятное к-во аппрувов: {perhaps_app_count}"
             )
             if self.recommended_approve.value < self.approve_percent_fact:
-                self.recommended_approve.comment += (f"\nФактический аппрув ({self.approve_percent_fact}) "
-                                                    f"выше рекоммендуемого ({self.recommended_approve.value}), "
-                                                    f"коррекция рекоммендации до фактического аппрува")
+                self.recommended_approve.comment += (f"\nФактический аппрув ({self.approve_percent_fact}) выше рекоммендуемого ({self.recommended_approve.value}), коррекция рекоммендации до фактического аппрува")
                 self.recommended_approve.value = self.approve_percent_fact
             elif self.recommended_approve.value > self.approve_percent_fact + 5:
-                self.recommended_approve.comment += (f"\nФактический аппрув ({self.approve_percent_fact}) "
-                                                    f"рекоммендуемый ({self.recommended_approve.value}), выше на +5%, "
-                                                    f"коррекция до верхней границы +5%")
+                self.recommended_approve.comment += (f"\nФактический аппрув ({self.approve_percent_fact}) рекоммендуемый ({self.recommended_approve.value}), выше на +5%, коррекция до верхней границы +5%")
                 self.recommended_approve.value = self.approve_percent_fact + 5
 
         if self.expecting_buyout_leads:
             self.buyout_rate_plan = safe_div(self.expecting_buyout_leads, self.lead_container.leads_approved_count)
+            self.recommended_buyout.value = self.buyout_percent_fact * 1.02 if self.buyout_percent_fact is not None else None
+            self.recommended_buyout.comment = f"Текущий выкуп: {self.buyout_percent_fact}, поднимаем на 2%" if self.buyout_percent_fact is not None else ""
 
-        self.recommended_buyout.value = self.buyout_percent_fact * 1.02 if self.buyout_percent_fact is not None else None
-        self.recommended_buyout.comment = f"Текущий выкуп: {self.buyout_percent_fact}, поднимаем на 2%" if self.buyout_percent_fact is not None else ""
         self.recommended_confirmation_price.value = self.max_confirmation_price
         self.recommended_confirmation_price.comment = "Максимальный чек в группе"
 
@@ -336,8 +333,7 @@ class ItemCategory:
             elif offer.recommended_approve.value is None:
                 offer.set_kpi_app_need_correction("Рекоммендация несформирована")
             elif abs(offer.kpi_current_plan.planned_approve - offer.recommended_approve.value) > 1:
-                offer.set_kpi_app_need_correction(f"Плановый % аппрува ({offer.kpi_current_plan.planned_approve}) "
-                                                f"отличается от рекоммендации ({offer.recommended_approve.value}) более чем на 1%")
+                offer.set_kpi_app_need_correction(f"Плановый % аппрува ({offer.kpi_current_plan.planned_approve}) отличается от рекоммендации ({offer.recommended_approve.value}) более чем на 1%")
 
             offer.recommended_buyout = self.recommended_buyout
             if not offer.kpi_current_plan:
@@ -347,8 +343,7 @@ class ItemCategory:
             elif offer.recommended_buyout.value is None:
                 offer.set_kpi_buyout_need_correction("Рекоммендация несформирована")
             elif abs(offer.kpi_current_plan.planned_buyout - offer.recommended_buyout.value) > 1:
-                offer.set_kpi_buyout_need_correction(f"Плановый % выкупа ({offer.kpi_current_plan.planned_buyout}) "
-                                                    f"отличается от рекоммендации ({offer.recommended_buyout.value}) более чем на 1%")
+                offer.set_kpi_buyout_need_correction(f"Плановый % выкупа ({offer.kpi_current_plan.planned_buyout}) отличается от рекоммендации ({offer.recommended_buyout.value}) более чем на 1%")
 
             offer.recommended_confirmation_price = self.recommended_confirmation_price
             if not offer.kpi_current_plan:
@@ -361,7 +356,7 @@ class ItemCategory:
                 offer.set_confirmation_price_need_correction(f"Текущий чек подтверждения ({offer.kpi_current_plan.confirmation_price}) < Максимального в группе ({self.max_confirmation_price})")
 
         for aff in self.aff.values():
-            aff.finalyze(kpi_list)
+            aff.finalyze(kpi_plans)
 
 class OpAnalyzeKpiV2:
     vars = None
@@ -414,7 +409,6 @@ class OpAnalyzeKpiV2:
             return Recommendation(None, str_comment + f"Недостаточно операторов для расчета плана ({eff_operators})")
         if eff_operators > 5:
             eff_operators = 5
-
         r = []
         str_comment += f"Операторов для расчета эффективности: {eff_operators}\n--\n"
         calls = 0
@@ -427,7 +421,6 @@ class OpAnalyzeKpiV2:
                 str_comment += f"\t{op.key} звонков: {op.kpi_stat.calls_group_effective_count} аппрувов: {op.kpi_stat.leads_effective_count}\n"
                 calls += op.kpi_stat.calls_group_effective_count
                 leads += op.kpi_stat.leads_effective_count
-
         str_comment += "--\n"
         str_comment += f"Звонков: {calls} лидов: {leads}\n"
         str_comment += f"Результат: {safe_div(calls, leads)}\n"
@@ -457,7 +450,6 @@ class OpAnalyzeKpiV2:
     @staticmethod
     def print_pd_category(pd: List[List[str]], category: ItemCategory):
         i = len(pd)
-        col = 0
         pd.append([])
         pd[i].append(ROW_TITLE_CATEGORY)
         pd[i].append(category.key)
@@ -488,7 +480,6 @@ class OpAnalyzeKpiV2:
     @staticmethod
     def print_pd_offer(pd: List[List[str]], offer: CommonItem, category: ItemCategory):
         i = len(pd)
-        col = 0
         pd.append([])
         pd[i].append(ROW_TITLE_OFFER)
         pd[i].append(category.key)
@@ -536,7 +527,6 @@ class OpAnalyzeKpiV2:
     @staticmethod
     def print_pd_aff(pd: List[List[str]], aff: CommonItem):
         i = len(pd)
-        col = 0
         pd.append([])
         pd[i].append(ROW_TITLE_AFF)
         pd[i].extend([BLANK_KEY] * 3)
@@ -552,7 +542,6 @@ class OpAnalyzeKpiV2:
     @staticmethod
     def print_pd_operator(pd: List[List[str]], operator: CommonItem):
         i = len(pd)
-        col = 0
         pd.append([])
         pd[i].append(ROW_TITLE_OPERATOR)
         pd[i].extend([BLANK_KEY] * 4)
@@ -567,7 +556,6 @@ class OpAnalyzeKpiV2:
     class Stat:
         def __init__(self):
             self.category: Dict[str, ItemCategory] = {}
-            from .models import KpiPlan
             self.kpi_plans = KpiPlan.objects.all()
 
         def push_offer(self, offer):
