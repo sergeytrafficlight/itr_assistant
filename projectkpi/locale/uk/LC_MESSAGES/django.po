@@ -1,0 +1,108 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the PACKAGE package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: PACKAGE VERSION\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2025-10-28 09:31+0300\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=4; plural=(n % 1 == 0 && n % 10 == 1 && n % 100 != "
+"11 ? 0 : n % 1 == 0 && n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % "
+"100 > 14) ? 1 : n % 1 == 0 && (n % 10 ==0 || (n % 10 >=5 && n % 10 <=9) || "
+"(n % 100 >=11 && n % 100 <=14 )) ? 2: 3);\n"
+#: .\kpi_analyzer\Templates\kpi_analyze.html:4
+#: .\kpi_analyzer\Templates\kpi_analyze.html:10
+msgid "KPI Analysis"
+msgstr ""
+
+#: .\kpi_analyzer\Templates\kpi_analyze.html:11
+#: .\kpi_analyzer\Templates\kpi_analyzer\kpi_summary.html:47
+#: .\kpi_analyzer\Templates\kpi_analyzer\table.html:13
+msgid "Offers"
+msgstr ""
+
+#: .\kpi_analyzer\Templates\kpi_analyze.html:12
+#: .\kpi_analyzer\Templates\kpi_analyzer\kpi_summary.html:48
+#: .\kpi_analyzer\Templates\kpi_analyzer\table.html:14
+msgid "Leads"
+msgstr ""
+
+#: .\kpi_analyzer\Templates\kpi_analyze.html:13
+#: .\kpi_analyzer\Templates\kpi_analyzer\kpi_summary.html:49
+#: .\kpi_analyzer\Templates\kpi_analyzer\table.html:15
+msgid "Calls"
+msgstr ""
+
+#: .\kpi_analyzer\Templates\kpi_analyze.html:14
+#: .\kpi_analyzer\Templates\kpi_analyzer\kpi_summary.html:50
+#: .\kpi_analyzer\Templates\kpi_analyzer\table.html:16
+msgid "KPI Plans"
+msgstr ""
+
+#: .\kpi_analyzer\Templates\kpi_analyze.html:15
+#: .\kpi_analyzer\Templates\kpi_analyzer\kpi_summary.html:51
+#: .\kpi_analyzer\Templates\kpi_analyzer\table.html:17
+msgid "Lead Pivot"
+msgstr ""
+
+#: .\kpi_analyzer\Templates\kpi_analyze.html:16
+#: .\kpi_analyzer\Templates\kpi_analyzer\kpi_summary.html:4
+#: .\kpi_analyzer\Templates\kpi_analyzer\kpi_summary.html:10
+#: .\kpi_analyzer\Templates\kpi_analyzer\table.html:18
+msgid "KPI Summary"
+msgstr ""
+
+#: .\kpi_analyzer\Templates\kpi_analyze.html:17
+msgid "Данные отображаются в формате таблицы, похожем на Google Sheets."
+msgstr ""
+
+#: .\kpi_analyzer\Templates\kpi_analyzer\kpi_summary.html:14
+msgid "Category"
+msgstr ""
+
+#: .\kpi_analyzer\Templates\kpi_analyzer\kpi_summary.html:15
+msgid "Effective Calls"
+msgstr ""
+
+#: .\kpi_analyzer\Templates\kpi_analyzer\kpi_summary.html:16
+msgid "Effective Leads"
+msgstr ""
+
+#: .\kpi_analyzer\Templates\kpi_analyzer\kpi_summary.html:17
+msgid "Effective Rate"
+msgstr ""
+
+#: .\kpi_analyzer\Templates\kpi_analyzer\kpi_summary.html:18
+msgid "Recommended Efficiency"
+msgstr ""
+
+#: .\kpi_analyzer\Templates\kpi_analyzer\kpi_summary.html:19
+msgid "Approve Rate Plan"
+msgstr ""
+
+#: .\kpi_analyzer\Templates\kpi_analyzer\kpi_summary.html:20
+msgid "Buyout Rate Plan"
+msgstr ""
+
+#: .\kpi_analyzer\Templates\kpi_analyzer\kpi_summary.html:21
+msgid "Max Confirmation Price"
+msgstr ""
+
+#: .\kpi_analyzer\Templates\kpi_analyzer\kpi_summary.html:40
+msgid "Recommendations"
+msgstr ""
+
+#: .\kpi_analyzer\Templates\kpi_analyzer\table.html:4
+#: .\kpi_analyzer\Templates\kpi_analyzer\table.html:11
+msgid "Table"
+msgstr ""
