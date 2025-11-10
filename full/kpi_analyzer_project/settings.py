@@ -152,28 +152,47 @@ REST_FRAMEWORK = {
 CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
 
-# ВОТ ИСПРАВЛЕННОЕ ЛОГИРОВАНИЕ - ДОБАВЛЯЕМ DEBUG УРОВЕНЬ
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {message}',
+            'style': '{',
+        },
+        'simple': {
+            'format': '{levelname} {message}',
+            'style': '{',
+        },
+    },
     'handlers': {
         'console': {
+            'level': 'DEBUG',
             'class': 'logging.StreamHandler',
+            'formatter': 'verbose'
         },
-    },
-    'root': {
-        'handlers': ['console'],
-        'level': 'INFO',  # Меняем с DEBUG на INFO
+        'file': {
+            'level': 'DEBUG',
+            'class': 'logging.FileHandler',
+            'filename': 'debug.log',
+            'formatter': 'verbose',
+        },
     },
     'loggers': {
-        'django.utils.autoreload': {
-            'handlers': ['console'],
-            'level': 'WARNING',  # Отключаем DEBUG логи autoreload
-            'propagate': False,
-        },
         'django': {
             'handlers': ['console'],
-            'level': 'INFO',  # Только INFO и выше для Django
+            'level': 'INFO',
+            'propagate': True,
+        },
+        'kpi_analyzer': {
+            'handlers': ['console', 'file'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+        'kpi_analyzer.services.db_service': {
+            'handlers': ['console', 'file'],
+            'level': 'DEBUG',
             'propagate': False,
         },
     },

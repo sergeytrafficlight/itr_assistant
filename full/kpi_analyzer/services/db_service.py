@@ -34,14 +34,18 @@ class DBService:
 
     @staticmethod
     def get_kpi_plans_data(date_from, date_to):
+        print(f"🔴 ВЫЗВАН get_kpi_plans_data: {date_from} - {date_to}")
+
+        # ОЧИСТКА КЭША ПЕРЕД ЗАПРОСОМ
         cache_key = f"kpi_plans_{date_from}_{date_to}"
-        plans = cache.get(cache_key)
-        if plans is None:
-            logger.info(f"Кэш промах для KPI планов {date_from}-{date_to}, запрос к БД")
-            start_time = time.time()
-            try:
-                with connections['itrade'].cursor() as cursor:
-                    sql = """SELECT
+        cache.delete(cache_key)
+
+        print(f"🟢 ВЫПОЛНЯЕМ SQL ЗАПРОС БЕЗ КЭША")
+        logger.info(f"Кэш отключен для KPI планов {date_from}-{date_to}, запрос к БД")
+        start_time = time.time()
+        try:
+            with connections['itrade'].cursor() as cursor:
+                sql = """SELECT
 offer_plan.id as kpi_id,
 offer_plan.period_date as period_date,
 offer_plan.offer_id as offer_id,
@@ -52,22 +56,33 @@ LEFT JOIN partners_affiliate aff ON aff.id = offer_plan.affiliate_id
 WHERE offer_plan.period_date BETWEEN %s AND %s
 ORDER BY period_date ASC"""
 
-                    cursor.execute(sql, [date_from, date_to])
-                    columns = [col[0] for col in cursor.description]
-                    plans = [dict(zip(columns, row)) for row in cursor.fetchall()]
-                    cache.set(cache_key, plans, 6 * 3600)
-                    execution_time = time.time() - start_time
-                    logger.info(f"Получено {len(plans)} KPI планов за {execution_time:.2f} секунд")
+                print(f"🟡 SQL ЗАПРОС ДЛЯ KPI:")
+                print(sql)
+                print(f"🟡 ПАРАМЕТРЫ: {date_from}, {date_to}")
 
-            except Exception as e:
-                logger.error(f"Ошибка при получении KPI планов из БД: {str(e)}")
-                raise
-        else:
-            logger.debug(f"Кэш попадание для KPI планов {date_from}-{date_to}, записей: {len(plans)}")
-        return plans
+                logger.info(f"SQL запрос для получения KPI:")
+                logger.info(f"{sql}")
+                logger.info(f"Параметры: date_from={date_from}, date_to={date_to}")
+
+                cursor.execute(sql, [date_from, date_to])
+                columns = [col[0] for col in cursor.description]
+                plans = [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+                # НЕ СОХРАНЯЕМ В КЭШ
+                execution_time = time.time() - start_time
+                print(f"🔵 ПОЛУЧЕНО {len(plans)} KPI ПЛАНОВ за {execution_time:.2f} секунд")
+                logger.info(f"Получено {len(plans)} KPI планов за {execution_time:.2f} секунд")
+
+                return plans
+
+        except Exception as e:
+            print(f"🔴 ОШИБКА: {str(e)}")
+            logger.error(f"Ошибка при получении KPI планов из БД: {str(e)}")
+            raise
 
     @staticmethod
     def get_operator_kpi_mapping(date_from, date_to):
+        print(f"🔴 ВЫЗВАН get_operator_kpi_mapping: {date_from} - {date_to}")
         logger.info(f"Получение маппинга оператор -> KPI за период {date_from} - {date_to}")
         start_time = time.time()
 
@@ -94,20 +109,32 @@ GROUP BY lv_op.username, kpi.offer_id, kpi.affiliate_id,
          kpi.operator_efficiency, kpi.planned_approve_from, 
          kpi.planned_buyout_from, kpi.confirmation_price
 ORDER BY activity_count DESC"""
+
+                print(f"🟡 SQL ЗАПРОС ДЛЯ МАППИНГА ОПЕРАТОР->KPI:")
+                print(sql)
+                print(f"🟡 ПАРАМЕТРЫ: {date_from}, {date_to}")
+
+                logger.info(f"SQL запрос для получения маппинга оператор->KPI:")
+                logger.info(f"{sql}")
+                logger.info(f"Параметры: date_from={date_from}, date_to={date_to}")
+
                 cursor.execute(sql, [date_to, date_from, date_to])
                 columns = [col[0] for col in cursor.description]
                 results = [dict(zip(columns, row)) for row in cursor.fetchall()]
 
                 execution_time = time.time() - start_time
+                print(f"🔵 ПОЛУЧЕНО {len(results)} МАППИНГОВ за {execution_time:.2f} секунд")
                 logger.info(f"Получено {len(results)} маппингов оператор->KPI за {execution_time:.2f} секунд")
                 return results
 
         except Exception as e:
+            print(f"🔴 ОШИБКА: {str(e)}")
             logger.error(f"Ошибка при получении маппинга оператор->KPI: {str(e)}")
             return []
 
     @staticmethod
     def get_offers(v):
+        print(f"🔴 ВЫЗВАН get_offers: {v}")
         offer_a = DBService.prepare_sql_array(v.get('offer_id', []))
         category_a = DBService.prepare_sql_array(v.get('category', []))
         excl_category = DBService.prepare_sql_array_array(DBService.exclude_category())
@@ -126,17 +153,28 @@ AND group_offer.name NOT IN (""" + excl_category + """)"""
         if offer_a:
             q += "AND partners_offer.id IN (" + offer_a + ")\n"
 
+        print(f"🟡 SQL ЗАПРОС ДЛЯ ОФФЕРОВ:")
+        print(q)
+
+        logger.info(f"SQL запрос для получения офферов:")
+        logger.info(f"{q}")
+
         try:
             with connections['itrade'].cursor() as cursor:
                 cursor.execute(q)
                 columns = [col[0] for col in cursor.description]
-                return [dict(zip(columns, row)) for row in cursor.fetchall()]
+                results = [dict(zip(columns, row)) for row in cursor.fetchall()]
+                print(f"🔵 ПОЛУЧЕНО {len(results)} ОФФЕРОВ")
+                logger.info(f"Получено {len(results)} офферов")
+                return results
         except Exception as e:
+            print(f"🔴 ОШИБКА: {str(e)}")
             logger.error(f"Ошибка при получении офферов: {str(e)}")
             return []
 
     @staticmethod
     def get_lead(v):
+        print(f"🔴 ВЫЗВАН get_lead: {v}")
         date_from = DBService.normalize_datetime(v.get('date_from'), "00:00:00")
         date_to = DBService.normalize_datetime(v.get('date_to'), "23:59:59")
         advertiser = DBService.prepare_sql_array(v.get('advertiser', []))
@@ -190,17 +228,28 @@ WHERE 1=1"""
         if aff_id_a:
             q += "AND tl_lead.webmaster_id IN (" + aff_id_a + ")\n"
 
+        print(f"🟡 SQL ЗАПРОС ДЛЯ ЛИДОВ:")
+        print(q)
+
+        logger.info(f"SQL запрос для получения лидов:")
+        logger.info(f"{q}")
+
         try:
             with connections['itrade'].cursor() as cursor:
                 cursor.execute(q)
                 columns = [col[0] for col in cursor.description]
-                return [dict(zip(columns, row)) for row in cursor.fetchall()]
+                results = [dict(zip(columns, row)) for row in cursor.fetchall()]
+                print(f"🔵 ПОЛУЧЕНО {len(results)} ЛИДОВ")
+                logger.info(f"Получено {len(results)} лидов")
+                return results
         except Exception as e:
+            print(f"🔴 ОШИБКА: {str(e)}")
             logger.error(f"Ошибка при получении лидов: {str(e)}")
             return []
 
     @staticmethod
     def get_call(v):
+        print(f"🔴 ВЫЗВАН get_call: {v}")
         date_from = DBService.normalize_datetime(v.get('date_from'), "00:00:00")
         date_to = DBService.normalize_datetime(v.get('date_to'), "23:59:59")
         advertiser = DBService.prepare_sql_array(v.get('advertiser', []))
@@ -261,17 +310,28 @@ AND po.id IS NOT null"""
         if aff_id_a:
             q += "AND pt.webmaster_id IN (" + aff_id_a + ")\n"
 
+        print(f"🟡 SQL ЗАПРОС ДЛЯ ЗВОНКОВ:")
+        print(q)
+
+        logger.info(f"SQL запрос для получения звонков:")
+        logger.info(f"{q}")
+
         try:
             with connections['itrade'].cursor() as cursor:
                 cursor.execute(q)
                 columns = [col[0] for col in cursor.description]
-                return [dict(zip(columns, row)) for row in cursor.fetchall()]
+                results = [dict(zip(columns, row)) for row in cursor.fetchall()]
+                print(f"🔵 ПОЛУЧЕНО {len(results)} ЗВОНКОВ")
+                logger.info(f"Получено {len(results)} звонков")
+                return results
         except Exception as e:
+            print(f"🔴 ОШИБКА: {str(e)}")
             logger.error(f"Ошибка при получении звонков: {str(e)}")
             return []
 
     @staticmethod
     def get_leads_container(v):
+        print(f"🔴 ВЫЗВАН get_leads_container: {v}")
         date_from = DBService.normalize_datetime(v.get('date_from'), "00:00:00")
         date_to = DBService.normalize_datetime(v.get('date_to'), "23:59:59")
         advertiser = DBService.prepare_sql_array(v.get('advertiser', []))
@@ -324,17 +384,28 @@ WHERE 1=1"""
         if aff_id_a:
             q += "AND pt.webmaster_id IN (" + aff_id_a + ")\n"
 
+        print(f"🟡 SQL ЗАПРОС ДЛЯ КОНТЕЙНЕРА ЛИДОВ:")
+        print(q)
+
+        logger.info(f"SQL запрос для получения контейнера лидов:")
+        logger.info(f"{q}")
+
         try:
             with connections['itrade'].cursor() as cursor:
                 cursor.execute(q)
                 columns = [col[0] for col in cursor.description]
-                return [dict(zip(columns, row)) for row in cursor.fetchall()]
+                results = [dict(zip(columns, row)) for row in cursor.fetchall()]
+                print(f"🔵 ПОЛУЧЕНО {len(results)} ЗАПИСЕЙ КОНТЕЙНЕРА ЛИДОВ")
+                logger.info(f"Получено {len(results)} записей контейнера лидов")
+                return results
         except Exception as e:
+            print(f"🔴 ОШИБКА: {str(e)}")
             logger.error(f"Ошибка при получении контейнера лидов: {str(e)}")
             return []
 
     @staticmethod
     def create_kpi_list_from_db(date_from, date_to):
+        print(f"🔴 ВЫЗВАН create_kpi_list_from_db: {date_from} - {date_to}")
         kpi_plans_data = DBService.get_kpi_plans_data(date_from, date_to)
         from .optimized_services import OptimizedKPIList
         return OptimizedKPIList(kpi_plans_data)

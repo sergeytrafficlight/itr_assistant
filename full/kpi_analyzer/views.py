@@ -72,37 +72,6 @@ class LegacyFilterProcessor:
         return has_calls or has_leads
 
 
-def get_kpi_plans_data(date_from, date_to):
-    logger.info(f"Получение KPI планов с {date_from} по {date_to}")
-    try:
-        connection = connections['itrade']
-        with connection.cursor() as cursor:
-            sql = """
-                SELECT offer_plan.id as call_eff_kpi_id,
-                       offer_plan.period_date as call_eff_period_date,
-                       offer_plan.offer_id as call_eff_offer_id,
-                       aff.external_id as call_eff_affiliate_id,
-                       offer_plan.operator_efficiency as call_eff_operator_efficiency,
-                       offer_plan.planned_approve_from as planned_approve,
-                       offer_plan.planned_buyout_from as planned_buyout,
-                       offer_plan.confirmation_price as confirmation_price,
-                       offer_plan.updated_at as update_date,
-                       offer_plan.operator_efficiency_updated_at as operator_effeciency_update_date,
-                       offer_plan.planned_approve_update_at as planned_approve_update_date,
-                       offer_plan.planned_buyout_update_at as planned_buyout_update_date
-            FROM partners_tlofferplanneddataperiod AS offer_plan
-            LEFT JOIN partners_affiliate aff ON aff.id = offer_plan.affiliate_id
-            WHERE offer_plan.period_date BETWEEN %s AND %s
-            ORDER BY period_date ASC
-        """
-            cursor.execute(sql, [date_from, date_to])
-            columns = [col[0] for col in cursor.description]
-            results = [dict(zip(columns, row)) for row in cursor.fetchall()]
-            logger.info(f"Получено {len(results)} KPI планов")
-            return results
-    except Exception as e:
-        logger.error(f"Ошибка при получении KPI планов: {str(e)}")
-        raise
 
 
 def prepare_sql_array(values):
@@ -526,33 +495,16 @@ class KPIAnalyticsViewSet(viewsets.ViewSet):
     def offers_list(self, request):
         logger.info("Запрос списка офферов")
         try:
-            connection = connections['itrade']
-            with connection.cursor() as cursor:
-                excl_category = prepare_sql_array_array(['Архив', 'Входящая линия'])
-                sql = f"""
-                    SELECT partners_offer.id as id,
-                           partners_offer.name as name,
-                           group_offer.name as category_name
-                    FROM partners_offer
-                    LEFT JOIN partners_assignedoffer assigned_offer ON assigned_offer.offer_id = partners_offer.id
-                    LEFT JOIN partners_groupoffer group_offer ON assigned_offer.group_id = group_offer.id
-                    WHERE group_offer.name NOT IN ({excl_category})
-                """
-                category = request.query_params.get('category')
-                offer_id = request.query_params.get('offer_id')
-                if category:
-                    category_a = prepare_sql_array([category])
-                    sql += f" AND group_offer.name IN ({category_a})"
-                if offer_id:
-                    offer_a = prepare_sql_array([offer_id])
-                    sql += f" AND partners_offer.id IN ({offer_a})"
-
-                cursor.execute(sql)
-                columns = [col[0] for col in cursor.description]
-                results = [dict(zip(columns, row)) for row in cursor.fetchall()]
-                logger.info(f"Возвращено {len(results)} офферов")
-                return Response({'offers': results})
+            v = {
+                'category': request.query_params.get('category'),
+                'offer_id': request.query_params.get('offer_id')
+            }
+            results = DBService.get_offers(v)
+            logger.info(f"Возвращено {len(results)} офферов")
+            return Response({'offers': results})
         except Exception as e:
+            logger.error(f"Ошибка при получении списка офферов: {str(e)}")
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
             logger.error(f"Ошибка при получении списка офферов: {str(e)}")
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -566,34 +518,12 @@ class KPIAnalyticsViewSet(viewsets.ViewSet):
 
         logger.info(f"Получение полных KPI планов с {date_from} по {date_to}")
         try:
-            connection = connections['itrade']
-            with connection.cursor() as cursor:
-                sql = """
-                    SELECT offer_plan.id as call_eff_kpi_id,
-                           offer_plan.period_date as call_eff_period_date,
-                           offer_plan.offer_id as call_eff_offer_id,
-                           offer_plan.affiliate_id as call_eff_affiliate_id,
-                           offer_plan.operator_efficiency as call_eff_operator_efficiency,
-                           offer_plan.planned_approve_from as planned_approve,
-                           offer_plan.planned_buyout_from as planned_buyout,
-                           offer_plan.confirmation_price as confirmation_price,
-                           offer_plan.updated_at as update_date,
-                           offer_plan.operator_efficiency_updated_at as operator_effeciency_update_date,
-                           offer_plan.planned_approve_update_at as planned_approve_update_date,
-                           offer_plan.planned_buyout_update_at as planned_buyout_update_date
-                FROM partners_tlofferplanneddataperiod AS offer_plan
-                WHERE offer_plan.period_date BETWEEN %s AND %s
-                ORDER BY period_date ASC
-                """
-                cursor.execute(sql, [date_from, date_to])
-                columns = [col[0] for col in cursor.description]
-                results = [dict(zip(columns, row)) for row in cursor.fetchall()]
-                logger.info(f"Получено {len(results)} KPI планов")
-                return Response({'kpi_plans': results})
+            results = DBService.get_kpi_plans_data(date_from, date_to)
+            logger.info(f"Получено {len(results)} KPI планов")
+            return Response({'kpi_plans': results})
         except Exception as e:
             logger.error(f"Ошибка при получении KPI планов: {str(e)}")
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
 
 class KPIAdvancedAnalysisViewSet(viewsets.ViewSet):
     permission_classes = [AllowAny]
@@ -731,7 +661,7 @@ class KPIAdvancedAnalysisViewSet(viewsets.ViewSet):
 
         logger.info(f"Дата анализа для KPI поиска: {analysis_date}")
 
-        kpi_plans_data = get_kpi_plans_data(date_from, date_to)
+        kpi_plans_data = DBService.get_kpi_plans_data(date_from, date_to)
 
         kpi_list = OptimizedKPIList(kpi_plans_data)
 
