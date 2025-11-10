@@ -1,0 +1,912 @@
+var op_analyze_kpi_v2_sheet_name = 'Анализ KPI';
+
+function op_analyze_kpi_v2_test() {
+
+  var a = Object();
+  a.x = 1;
+
+  Logger.log(a);
+  Logger.log(typeof(a.y));
+
+}
+
+var op_analyze_kpi_v2 = {}
+
+op_analyze_kpi_v2.calls_count_for_analyze = 30;
+
+op_analyze_kpi_v2.ROW_TITLE_CATEGORY = "Категория"
+op_analyze_kpi_v2.ROW_TITLE_OFFER = "Оффер"
+op_analyze_kpi_v2.ROW_TITLE_AFF = "Веб"
+op_analyze_kpi_v2.ROW_TITLE_OPERATOR = "Оператор"
+
+ op_analyze_kpi_v2.vars_proceed = function() {
+  var variables = {
+    sheetName: op_analyze_kpi_v2_sheet_name,
+    date_from: engine.get_sheet_value(op_analyze_kpi_v2_sheet_name, 'B3'),
+    date_to: engine.get_sheet_value(op_analyze_kpi_v2_sheet_name, 'B4'),
+    group_rows: engine.get_sheet_value(op_analyze_kpi_v2_sheet_name, 'B6'),
+    advertiser: engine.get_sheet_value(op_analyze_kpi_v2_sheet_name, 'B7').toLowerCase(),    
+    output: engine.get_sheet_value(op_analyze_kpi_v2_sheet_name, 'B8'),
+    aff_id: engine.get_sheet_value(op_analyze_kpi_v2_sheet_name, 'B9'),
+    category: engine.get_sheet_value(op_analyze_kpi_v2_sheet_name, 'B10').toLowerCase(),
+    offer_id: engine.get_sheet_value(op_analyze_kpi_v2_sheet_name, 'B11'),
+    lv_op: engine.get_sheet_value(op_analyze_kpi_v2_sheet_name, 'B12').toLowerCase(),
+
+
+
+    col_recommendation: 18, 
+    col_approve_recommendation: 25,
+    col_buyout_recommendation: 32,
+    range_full: 'C:AV',
+    range_start_row: 13,
+    range_start: 'C1',
+
+  }
+  return variables;
+}
+
+
+op_analyze_kpi_v2.vars = null;
+
+op_analyze_kpi_v2.get_vars = function() {
+  if (this.vars == null)
+    this.vars = new this.vars_proceed()
+  return this.vars
+}
+
+op_analyze_kpi_v2.sort_to_array_operators = function(a) {
+
+  var r1 = [];
+  var r2 = [];
+  for (var k in a) {
+    if (a[k].kpi_stat.calls_group_effective_count >= op_analyze_kpi_v2.calls_count_for_analyze && a[k].kpi_stat.effective_rate > 0.0)
+      r1.push(a[k])
+    else
+      r2.push(a[k])
+  }
+
+  r1.sort(function(a, b) {return a.kpi_stat.effective_rate - b.kpi_stat.effective_rate})
+  return r1.concat(r2)
+}
+
+op_analyze_kpi_v2.recommendation = function(value, comment) {
+  this.value = value;
+  this.comment = comment;
+}
+
+op_analyze_kpi_v2.get_operators_for_recommendations = function(operators) {
+  /** список операторов должен быть отсортирован по эффективности */
+  var eff_operators = 0;
+  for (var i in operators) {
+    if (operators[i].kpi_stat.effective_rate > 0.0 
+      && operators[i].kpi_stat.calls_group_effective_count >= op_analyze_kpi_v2.calls_count_for_analyze
+      ) {
+        eff_operators++;
+      }
+  }
+  
+  var str = "Операторов для анализа всего: " + eff_operators + "\n";
+  eff_operators = Math.round(eff_operators * 0.4);
+  if (eff_operators < 3)
+    return new op_analyze_kpi_v2.recommendation(null, str + "Недостаточно операторов для расчета плана (" + eff_operators + ")")
+  if (eff_operators > 5)
+    eff_operators = 5;
+  
+  var r = [];
+
+  str += "Операторов для расчета эффективности: " + eff_operators + "\n--\n";
+  var calls = 0;
+  var leads = 0;
+  for (var i = 0; i < operators.length && r.length < eff_operators; ++ i) {
+    if (operators[i].kpi_stat.effective_rate > 0.0 
+      && operators[i].kpi_stat.calls_group_effective_count > op_analyze_kpi_v2.calls_count_for_analyze
+      ) {
+        r.push(operators[i].key);
+        str += "\t" + operators[i].key + 
+          " звонков: " + operators[i].kpi_stat.calls_group_effective_count + 
+          " аппрувов: " + operators[i].kpi_stat.leads_effective_count +
+          "\n";
+        calls += operators[i].kpi_stat.calls_group_effective_count;
+        leads += operators[i].kpi_stat.leads_effective_count;
+      }    
+  }
+
+  str += "--\n";
+  str += "Звонков: " + calls + " лидов: " + leads + "\n";
+  str += "Результат: "+ safe_div(calls, leads) + '\n';
+
+  return new op_analyze_kpi_v2.recommendation(r, str);
+}
+
+op_analyze_kpi_v2.get_recommended_effeciency = function(operators, top_operators) {
+  
+  if (top_operators == null)
+    return new op_analyze_kpi_v2.recommendation(null, "Недостаточно операторов для принятия решения");
+
+  var calls = 0;
+  var leads = 0;
+
+  var str = "";
+  for (var i = 0; i < operators.length; ++i) {
+    var o = operators[i]
+    if (top_operators.indexOf(o.key) < 0)
+      continue;
+
+    str += "\t" + o.key + 
+      " звонков: " + o.kpi_stat.calls_group_effective_count + 
+      " аппрувов: " + o.kpi_stat.leads_effective_count +
+      "\n";
+
+    calls += o.kpi_stat.calls_group_effective_count;
+    leads += o.kpi_stat.leads_effective_count;      
+
+  }
+
+  var result = safe_div(calls, leads)
+
+  str += "--\n";
+  str += "Звонков: " + calls + " лидов: " + leads + "\n";
+  str += "Результат: "+ result + '\n';
+
+  if (calls < op_analyze_kpi_v2.calls_count_for_analyze)
+    return new op_analyze_kpi_v2.recommendation(null, str + "Недостаточно звонков для принятия решения");
+  else
+    return new op_analyze_kpi_v2.recommendation(result, str);
+}
+
+
+op_analyze_kpi_v2.offer = function(sql) {
+  this.id = sql.getInt('id');
+  this.name = sql.getString('name');
+  this.category = sql.getString('category_name')
+
+  this.key_category = this.category;
+  this.key_offer = "[" + this.id + "] " + this.name;
+}
+
+op_analyze_kpi_v2.lead = function(sql) {
+
+  this.id = sql.getInt('call_eff_crm_lead_id');
+  this.offer_id = sql.getInt('offer_id');
+  this.offer_name = sql.getString('offer_name')
+  this.aff_id = sql.getInt('aff_id');
+  this.lv_operator = sql.getString('lv_username')
+  this.category = sql.getString('category_name')  
+
+  this.key_category = this.category;
+  this.key_offer = "[" + this.offer_id + "] " + this.offer_name;
+  this.key_aff = this.aff_id;
+  this.key_operator = this.lv_operator;
+}
+
+op_analyze_kpi_v2.call = function(sql) {
+
+  this.id = sql.getInt('call_eff_id');
+  this.offer_id = sql.getInt('call_eff_offer_id');
+  this.offer_name = sql.getString('offer_name')
+  this.aff_id = sql.getInt('call_eff_affiliate_id');
+  this.lv_operator = sql.getString('lv_username')  
+  this.category = sql.getString('category_name')  
+
+  this.key_category = this.category;
+  this.key_offer = "[" + this.offer_id + "] " + this.offer_name;
+  this.key_aff = this.aff_id;
+  this.key_operator = this.lv_operator;
+
+}
+
+op_analyze_kpi_v2.common_item = function(key, description) {
+
+  this.key = key;
+  this.description = description;
+  this.kpi_operator_effeciency_fact = null;
+  this.kpi_eff_need_correction = false;
+  this.kpi_eff_need_correction_str = "";
+  this.kpi_app_need_correction = false;
+  this.kpi_app_need_correction_str = "";
+  this.kpi_buyout_need_correction = false;
+  this.kpi_buyout_need_correction_str = "";
+  this.kpi_confirmation_price_need_correction = false;
+  this.kpi_confirmation_price_need_correction_str = ""
+
+  this.expecting_approve_leads = null;
+  this.expecting_buyout_leads = null;
+  
+  this.kpi_stat = new engine_call_effeciency2.stat();
+  this.lead_container = new engine_lead_container.stat();
+
+  this.push_lead_container = function(sql) {
+    this.lead_container.push_lead(sql);
+  }
+
+  this.push_lead = function(sql) {
+    this.kpi_stat.push_lead(sql);
+  }
+
+  this.push_call = function(sql) {
+    this.kpi_stat.push_call(sql)
+  }
+
+  this.set_kpi_eff_need_correction = function(comment) {
+    this.kpi_eff_need_correction = true;
+    this.kpi_eff_need_correction_str = comment;
+  }
+
+  this.set_kpi_app_need_correction = function(comment) {
+    this.kpi_app_need_correction = true;
+    this.kpi_app_need_correction_str = comment;
+  }
+
+  this.set_kpi_buyout_need_correction = function(comment) {
+    this.kpi_buyout_need_correction = true;
+    this.kpi_buyout_need_correction_str = comment;
+  }
+
+  this.set_confirmation_price_need_correction = function(comment) {
+    this.kpi_confirmation_price_need_correction = true;
+    this.kpi_confirmation_price_need_correction_str = comment;    
+  }
+
+
+  this.finalyze = function(kpi_list) {
+    this.kpi_stat.finalyze(kpi_list);
+    this.lead_container.finalyze();
+    this.kpi_operator_effeciency_fact = this.kpi_stat.effective_rate;
+
+    if (this.kpi_current_plan != null) {
+      this.expecting_approve_leads = this.lead_container.leads_non_trash_count * this.kpi_current_plan.planned_approve;
+      this.expecting_buyout_leads = this.lead_container.leads_approved_count * this.kpi_current_plan.planned_buyout;
+    } 
+
+    if (this.kpi_current_plan == null) {
+      this.set_kpi_eff_need_correction("KPI не найден")
+    } else if (this.recommended_effeciency.value == null) {
+      this.set_kpi_eff_need_correction("Не могу определить рекоммендацию")
+    } else {
+      if (Math.abs(this.recommended_effeciency.value - this.kpi_current_plan.operator_efficiency) > 0.2) {
+        this.set_kpi_eff_need_correction(
+          "Отличия в рек. эффективности и плановой более чем на 0.2, рек:" + this.recommended_effeciency.value + " план: " +
+            this.kpi_current_plan.operator_efficiency
+        )
+      } else if (this.kpi_current_plan.operator_efficiency == null  || this.kpi_current_plan.operator_efficiency == "" || this.kpi_current_plan.operator_efficiency == 0) {
+        this.set_kpi_eff_need_correction("KPI эффективности не установлен '" + this.kpi_current_plan.operator_efficiency + "'")
+      }
+    }  
+  }
+}
+
+op_analyze_kpi_v2.item_category = function(key, name) {
+  this.key = key;
+  this.description = name;
+  this.offer = {}
+  this.aff = {}
+  this.operator = {}
+  this.kpi_stat = new engine_call_effeciency2.stat();
+  this.lead_container = new engine_lead_container.stat();
+  this.approve_percent_fact = null;
+  this.expecting_approve_leads = 0;
+  this.approve_rate_plan = null;
+  this.recommended_approve = new op_analyze_kpi_v2.recommendation(null, "");
+  
+  this.expecting_buyout_leads = 0;
+  this.buyout_rate_plan = null;
+  this.buyout_percent_fact = null;
+  this.recommended_buyout = new op_analyze_kpi_v2.recommendation(null, "");
+  this.recommended_confirmation_price = new op_analyze_kpi_v2.recommendation(null, "");
+
+  this.push_offer = function(o, sql) {
+      this.offer[o.id] = new op_analyze_kpi_v2.common_item(o.id, o.name);
+  }
+
+  this.push_lead_container = function(l, sql) {
+    if (!(l.offer_id in this.offer))
+      this.offer[l.offer_id] = new op_analyze_kpi_v2.common_item(l.offer_id, l.offer_name);
+    this.offer[l.offer_id].push_lead_container(sql);
+    this.lead_container.push_lead(sql);
+  }
+
+  this.push_lead = function(l, sql) {
+    if (!(l.offer_id in this.offer))
+      this.offer[l.offer_id] = new op_analyze_kpi_v2.common_item(l.offer_id, l.offer_name);
+    if (!(l.aff_id in this.aff))
+      this.aff[l.aff_id] = new op_analyze_kpi_v2.common_item(l.aff_id, "");
+    if (!(l.lv_operator in this.operator))
+      this.operator[l.lv_operator] = new op_analyze_kpi_v2.common_item(l.lv_operator, "");
+
+    this.offer[l.offer_id].push_lead(sql);
+    this.aff[l.aff_id].push_lead(sql);
+    this.operator[l.lv_operator].push_lead(sql);
+
+    this.kpi_stat.push_lead(sql);
+  }
+
+  this.push_call = function(c, sql) {
+    if (!(c.offer_id in this.offer))
+      this.offer[c.offer_id] = new op_analyze_kpi_v2.common_item(c.offer_id, c.offer_name);
+    if (!(c.aff_id in this.aff))
+      this.aff[c.aff_id] = new op_analyze_kpi_v2.common_item(c.aff_id, "");
+    if (!(c.lv_operator in this.operator))
+      this.operator[c.lv_operator] = new op_analyze_kpi_v2.common_item(c.lv_operator, "");
+
+    this.offer[c.offer_id].push_call(sql);
+    this.aff[c.aff_id].push_call(sql);
+    this.operator[c.lv_operator].push_call(sql);
+
+    this.kpi_stat.push_call(sql);
+  }
+
+  this.finalyze = function(kpi_list) {
+    this.kpi_stat.finalyze(kpi_list);
+    this.lead_container.finalyze();
+
+    for (var k in this.operator)
+      this.operator[k].finalyze(kpi_list);
+
+    this.operator_sorted = op_analyze_kpi_v2.sort_to_array_operators(this.operator);
+    this.operator_recommended = op_analyze_kpi_v2.get_operators_for_recommendations(this.operator_sorted);
+    this.recommended_effeciency = op_analyze_kpi_v2.get_recommended_effeciency(this.operator_sorted, this.operator_recommended.value);
+    this.approve_percent_fact = safe_div(this.lead_container.leads_approved_count, this.lead_container.leads_non_trash_count) * 100;
+    this.buyout_percent_fact = safe_div(this.lead_container.leads_buyout_count, this.lead_container.leads_approved_count) * 100;
+  
+    this.max_confirmation_price = 0;
+    for (var k in this.offer) {
+      var o = this.offer[k];
+      o.kpi_current_plan = kpi_list.find_kpi(null, k, now_msk_date_str);
+      o.recommended_effeciency = this.recommended_effeciency;
+      o.finalyze(kpi_list);
+
+      if (o.kpi_current_plan != null)
+        this.max_confirmation_price = Math.max(this.max_confirmation_price, o.kpi_current_plan.confirmation_price)
+
+      if (o.expecting_approve_leads != null) {
+        if (this.expecting_approve_leads != null) {
+          this.expecting_approve_leads += o.expecting_approve_leads
+        }
+      } else {
+        this.expecting_approve_leads = null;
+      }
+
+      if (o.expecting_buyout_leads != null) {
+        if (this.expecting_buyout_leads != null) {
+          this.expecting_buyout_leads += o.expecting_buyout_leads
+        }
+      } else {
+        this.expecting_buyout_leads = null;
+      }      
+
+      
+    }
+
+    if (this.expecting_approve_leads) {
+      this.approve_rate_plan = safe_div(this.expecting_approve_leads, this.lead_container.leads_non_trash_count);
+      var perhaps_app_count = ((this.lead_container.leads_approved_count / (this.kpi_stat.effective_percent / 100)) 
+        - this.lead_container.leads_approved_count ) * 0.3 + this.lead_container.leads_approved_count 
+      this.recommended_approve = new op_analyze_kpi_v2.recommendation(
+        safe_div(perhaps_app_count, this.lead_container.leads_non_trash_count) * 100,
+        "Текущая эффективность: " + this.kpi_stat.effective_percent + ", коррекция -> вероятное к-во аппрувов: " + perhaps_app_count
+      )
+
+      if (this.recommended_approve.value < this.approve_percent_fact) {
+        this.recommended_approve.comment += "\nФактический аппрув (" + this.approve_percent_fact + ") " + 
+          " выше рекоммендуемого (" + this.recommended_approve.value + "), коррекция рекоммендации до фактического аппрува"
+        this.recommended_approve.value = this.approve_percent_fact;          
+      } else if (this.recommended_approve.value > this.approve_percent_fact + 5) {
+        this.recommended_approve.comment += "\nФактический аппрув (" + this.approve_percent_fact + ") " + 
+          " рекоммендуемый (" + this.recommended_approve.value + "), выше на +5%, коррекция до верхней границы +5%"        
+        this.recommended_approve.value = this.approve_percent_fact + 5;          
+      }     
+
+
+    }
+
+    if (this.expecting_buyout_leads) {
+      this.buyout_rate_plan = safe_div(this.expecting_buyout_leads, this.lead_container.leads_approved_count);
+    }
+
+    this.recommended_buyout.value = this.buyout_percent_fact * 1.02
+    this.recommended_buyout.comment = "Текущий выкуп: " + this.buyout_percent_fact + ", поднимаем на 2%"
+
+    this.recommended_confirmation_price.value = this.max_confirmation_price;
+    this.recommended_confirmation_price.comment = "Максимальный чек в группе" 
+
+
+    for (var k in this.offer) {
+      var o = this.offer[k];
+
+      o.recommended_approve = this.recommended_approve;
+
+      if (o.kpi_current_plan == null) 
+        o.set_kpi_app_need_correction("KPI не найден")
+      else if(o.kpi_current_plan.planned_approve == null || o.kpi_current_plan.planned_approve < 0.1) 
+        o.set_kpi_app_need_correction("KPI аппрува не установлен или имеет предельно низкое значение (<0.1): " + o.kpi_current_plan.planned_approve)
+      else if (o.recommended_approve.value == null)
+        o.set_kpi_app_need_correction("Рекоммендация несформирована")
+      else if (Math.abs(o.kpi_current_plan.planned_approve - o.recommended_approve.value) > 1)
+        o.set_kpi_app_need_correction("Плановый % аппрува (" +o.kpi_current_plan.planned_approve + ") " + 
+        "отличается от рекоммендации (" + o.recommended_approve.value + ") более чем на 1%")
+
+      o.recommended_buyout = this.recommended_buyout;
+      if (o.kpi_current_plan == null) {
+        o.set_kpi_buyout_need_correction("KPI не найден")
+      } else if(o.kpi_current_plan.planned_buyout == null || o.kpi_current_plan.planned_buyout < 0.1) {
+        o.set_kpi_buyout_need_correction("KPI выкупа не установлен или имеет предельно низкое значение (<0.1): " + o.kpi_current_plan.planned_buyout)
+      } else if (o.recommended_buyout.value == null)
+        o.set_kpi_buyout_need_correction("Рекоммендация несформирована")      
+      else if (Math.abs(o.kpi_current_plan.planned_buyout - o.recommended_buyout.value) > 1)
+        o.set_kpi_buyout_need_correction("Плановый % выкупа (" +o.kpi_current_plan.planned_buyout + ") " + 
+        "отличается от рекоммендации (" + o.recommended_buyout.value + ") более чем на 1%")        
+
+      o.recommended_confirmation_price = this.recommended_confirmation_price;
+      if (o.kpi_current_plan == null) {
+        o.set_confirmation_price_need_correction("KPI не установлен")
+      } else if (o.kpi_current_plan.confirmation_price == null || o.kpi_current_plan.confirmation_price < 1) {
+        o.set_confirmation_price_need_correction("Чек подтверждения не установлен или предельно мал")
+      } else if (this.max_confirmation_price == 0 || this.max_confirmation_price < 1) {
+        o.set_confirmation_price_need_correction("Не удалось определить максимальный чек в группе или он предельно мал")
+      } else if (o.kpi_current_plan.confirmation_price != this.max_confirmation_price) {
+        o.set_confirmation_price_need_correction("Текущий чек подтверждения (" +
+          o.kpi_current_plan.confirmation_price + ") < Максимального в группе (" + this.max_confirmation_price + ")")
+      }
+    }           
+
+    for (var k in this.aff)
+      this.aff[k].finalyze(kpi_list);
+
+
+  }
+}
+
+
+op_analyze_kpi_v2.stat = function(stmt) {
+
+  this.category = {}
+
+  this.kpi_list = engine_call_effeciency2.make_kpi_list(stmt);
+
+  this.push_offer = function(sql) {
+    var o = new op_analyze_kpi_v2.offer(sql);
+    if (!(o.key_category in this.category))
+      this.category[o.key_category] = new op_analyze_kpi_v2.item_category(o.category, o.category);
+    this.category[o.key_category].push_offer(o, sql);
+  }
+
+  this.push_lead_container = function(sql) {
+    var l = new op_analyze_kpi_v2.lead(sql);
+    if (!(l.key_category in this.category))
+      this.category[l.key_category] = new op_analyze_kpi_v2.item_category(l.key_category, l.key_category);
+    this.category[l.category].push_lead_container(l, sql);
+  }
+
+  this.push_lead = function(sql) {
+    var l = new op_analyze_kpi_v2.lead(sql);
+
+    if (!(l.key_category in this.category))
+      this.category[l.key_category] = new op_analyze_kpi_v2.item_category(l.key_category, l.key_category);
+    this.category[l.key_category].push_lead(l, sql);
+  }
+
+  this.push_call = function(sql) {
+    var c = new op_analyze_kpi_v2.call(sql);
+    if (!(c.key_category in this.category))
+      this.category[c.key_category] = new op_analyze_kpi_v2.item_category(c.key_category, c.key_category);
+    
+    this.category[c.key_category].push_call(c, sql);
+  }
+
+  this.finalyze = function() {
+    for (var k in this.category) {
+      var c = this.category[k];
+      c.finalyze(this.kpi_list)
+    }
+  }
+
+  /*
+  var q = op_analyze_kpi_query.get_offers(op_analyze_kpi_v2.get_vars());
+  Logger.log("Q: " + q);
+  var r = stmt.executeQuery(q);
+  while (r.next())
+    this.push_offer(r);
+  */
+
+  var q = op_analyze_kpi_query.get_lead(op_analyze_kpi_v2.get_vars());
+  Logger.log("Q: " + q);
+  var r = stmt.executeQuery(q);
+  while (r.next())
+    this.push_lead(r)
+
+  var q = op_analyze_kpi_query.get_call(op_analyze_kpi_v2.get_vars());
+  Logger.log("Q: " + q);
+  var r = stmt.executeQuery(q);
+  while (r.next())
+    this.push_call(r)
+
+
+  var q = op_analyze_kpi_query.get_leads_container(op_analyze_kpi_v2.get_vars());
+  Logger.log("Q: " + q);
+  var r = stmt.executeQuery(q);
+  while (r.next())
+    this.push_lead_container(r);
+
+}
+
+op_analyze_kpi_v2.print_pd_category = function(pd, category) {
+
+  var i = pd.length;
+  var col = 0;
+  pd[i] = Array();
+
+  pd[i][col++] = op_analyze_kpi_v2.ROW_TITLE_CATEGORY;
+  pd[i][col++] = category.key;
+  pd[i][col++] = BLANK_KEY;
+  pd[i][col++] = BLANK_KEY;
+  pd[i][col++] = BLANK_KEY;
+  pd[i][col++] = BLANK_KEY;
+  pd[i][col++] = category.kpi_stat.calls_group_effective_count;
+  pd[i][col++] = category.kpi_stat.leads_effective_count;
+  pd[i][col++] = print_float(category.kpi_stat.effective_percent);
+  pd[i][col++] = BLANK_KEY // BLANK
+  pd[i][col++] = print_float(category.kpi_stat.effective_rate) // EFF FACT
+  pd[i][col++] = print_float(category.kpi_stat.expecting_effective_rate) // eff plan
+  pd[i][col++] = BLANK_KEY // EFF PLAN updated date
+  pd[i][col++] = BLANK_KEY // EFF PLAN type
+  pd[i][col++] = print_float(category.recommended_effeciency.value);
+  pd[i][col++] = BLANK_KEY // EFF DATE UPDATED
+  pd[i][col++] = BLANK_KEY // NEED CORRECTION
+  pd[i][col++] = BLANK_KEY // % approve 
+  pd[i][col++] = category.lead_container.leads_non_trash_count
+  pd[i][col++] = category.lead_container.leads_approved_count
+  pd[i][col++] = print_percent("", category.lead_container.leads_approved_count, category.lead_container.leads_non_trash_count, "");
+  pd[i][col++] = print_float(category.approve_rate_plan) + "%"
+  pd[i][col++] = print_float(category.recommended_approve.value) // рекоммендация аппрув
+  pd[i][col++] = BLANK_KEY // APP DATE UPDATED
+  pd[i][col++] = BLANK_KEY // NEED CORRECTION  
+  pd[i][col++] = BLANK_KEY // %buyout
+  pd[i][col++] = category.lead_container.leads_buyout_count;
+  pd[i][col++] = category.buyout_percent_fact;
+  pd[i][col++] = category.buyout_rate_plan
+  pd[i][col++] = category.recommended_buyout.value
+  pd[i][col++] = BLANK_KEY // BUYOUT DATE UPDATED
+  pd[i][col++] = BLANK_KEY // NEED CORRECTION  
+  pd[i][col++] = BLANK_KEY // SUMMARY 
+  pd[i][col++] = BLANK_KEY // EFF REC 
+  pd[i][col++] = BLANK_KEY // NEED CORR?
+  pd[i][col++] = BLANK_KEY // APP REC 
+  pd[i][col++] = BLANK_KEY // NEED CORR?
+  pd[i][col++] = category.max_confirmation_price // APP PRICE REC 
+  pd[i][col++] = BLANK_KEY // NEED CORR?
+  pd[i][col++] = BLANK_KEY // BUY REC 
+  pd[i][col++] = BLANK_KEY // NEED CORR?
+  pd[i][col++] = BLANK_KEY // LINK
+  
+}
+
+op_analyze_kpi_v2.print_pd_offer = function(pd, offer, category) {
+
+  var i = pd.length;
+  var col = 0;
+  pd[i] = Array();
+
+  pd[i][col++] = op_analyze_kpi_v2.ROW_TITLE_OFFER;
+  pd[i][col++] = category.key;
+  pd[i][col++] = offer.key;
+  pd[i][col++] = offer.description;
+  pd[i][col++] = BLANK_KEY;
+  pd[i][col++] = BLANK_KEY;
+  pd[i][col++] = offer.kpi_stat.calls_group_effective_count;
+  pd[i][col++] = offer.kpi_stat.leads_effective_count;
+  pd[i][col++] = print_float(offer.kpi_stat.effective_percent);
+  pd[i][col++] = BLANK_KEY // BLANK
+  pd[i][col++] = print_float(offer.kpi_stat.effective_rate) // EFF FACT
+  if (offer.kpi_current_plan != null) {
+    pd[i][col++] = print_float(offer.kpi_current_plan.operator_efficiency) // eff plan
+    pd[i][col++] = offer.kpi_current_plan.update_date;
+  } else {
+    pd[i][col++] = BLANK_KEY
+    pd[i][col++] = BLANK_KEY
+  }
+
+  pd[i][col++] = BLANK_KEY // EFF PLAN type    
+  pd[i][col++] = print_float(offer.recommended_effeciency.value);
+  pd[i][col++] = offer.kpi_current_plan.operator_effeciency_update_date // EFF DATE UPDATED
+  pd[i][col++] = offer.kpi_eff_need_correction;
+  pd[i][col++] = BLANK_KEY // % approve 
+  pd[i][col++] = offer.lead_container.leads_non_trash_count
+  pd[i][col++] = offer.lead_container.leads_approved_count
+  pd[i][col++] = print_percent("", offer.lead_container.leads_approved_count, offer.lead_container.leads_non_trash_count, "");
+  if (offer.kpi_current_plan != null) {
+    pd[i][col++] = print_float(offer.kpi_current_plan.planned_approve) // % approve plan
+  } else {
+    pd[i][col++] = BLANK_KEY // % approve plan
+  }
+
+  pd[i][col++] = print_float(offer.recommended_approve.value) // рекоммендация аппрув
+  pd[i][col++] = offer.kpi_current_plan.planned_approve_update_date // EFF DATE UPDATED
+  pd[i][col++] = offer.kpi_app_need_correction;
+  pd[i][col++] = BLANK_KEY // %buyout
+  pd[i][col++] = BLANK_KEY // %buyout amount  
+  pd[i][col++] = BLANK_KEY // %buyout fact
+  if (offer.kpi_current_plan != null) {
+    pd[i][col++] = print_float(offer.kpi_current_plan.planned_buyout) // %  buyout plan
+  } else {
+    pd[i][col++] = BLANK_KEY // % buyout plan
+  }
+  pd[i][col++] = print_float(offer.recommended_buyout.value) // рекоммендация выкуп
+  pd[i][col++] = offer.kpi_current_plan.planned_buyout_update_date // EFF DATE UPDATED
+  pd[i][col++] = offer.kpi_buyout_need_correction;
+
+  pd[i][col++] = "[ >>>> ]"
+  pd[i][col++] = print_float(offer.recommended_effeciency.value);
+  pd[i][col++] = offer.kpi_eff_need_correction;
+  pd[i][col++] = print_float(offer.recommended_approve.value)
+  pd[i][col++] = offer.kpi_app_need_correction;
+
+  
+  pd[i][col++] = print_float(offer.recommended_confirmation_price.value) 
+  pd[i][col++] = offer.kpi_confirmation_price_need_correction;
+
+  pd[i][col++] =  print_float(offer.recommended_buyout.value) 
+  pd[i][col++] = offer.kpi_buyout_need_correction;
+
+  pd[i][col++] = "=HYPERLINK(\"https://admin.crm.itvx.biz/partners/tloffer/" + offer.key + "/change/\";\"" + offer.key + "\")";
+}
+
+op_analyze_kpi_v2.print_pd_aff = function(pd, aff) {
+
+  var i = pd.length;
+  var col = 0;
+  pd[i] = Array();
+
+  pd[i][col++] = op_analyze_kpi_v2.ROW_TITLE_AFF;
+  pd[i][col++] = BLANK_KEY;
+  pd[i][col++] = BLANK_KEY;
+  pd[i][col++] = BLANK_KEY;
+  pd[i][col++] = aff.key;
+  pd[i][col++] = BLANK_KEY;
+  pd[i][col++] = aff.kpi_stat.calls_group_effective_count;
+  pd[i][col++] = aff.kpi_stat.leads_effective_count;
+  pd[i][col++] = print_float(aff.kpi_stat.effective_percent);
+  pd[i][col++] = BLANK_KEY // BLANK
+  pd[i][col++] = print_float(aff.kpi_stat.effective_rate) // EFF FACT
+  pd[i][col++] = BLANK_KEY // BLANK
+  pd[i][col++] = BLANK_KEY // EFF PLAN UPDATED DATE
+  pd[i][col++] = BLANK_KEY // EFF PLAN type
+  pd[i][col++] = BLANK_KEY// EFF RECOMMEND
+  pd[i][col++] = BLANK_KEY // EFF DATE UPDATED
+  pd[i][col++] = BLANK_KEY // NEED CORRECTION
+  pd[i][col++] = BLANK_KEY // % approve 
+  pd[i][col++] = BLANK_KEY // leads count
+  pd[i][col++] = BLANK_KEY // leads approved
+  pd[i][col++] = BLANK_KEY // % approve
+  pd[i][col++] = BLANK_KEY // % approve plan
+  pd[i][col++] = BLANK_KEY // % approve recommend
+  pd[i][col++] = BLANK_KEY // APP DATE UPDATED
+  pd[i][col++] = BLANK_KEY // NEED CORRECTION  
+  pd[i][col++] = BLANK_KEY // % buyout
+  pd[i][col++] = BLANK_KEY // %buyout amount  
+  pd[i][col++] = BLANK_KEY // % buyout fact
+  pd[i][col++] = BLANK_KEY // %buyout plan 
+  pd[i][col++] = BLANK_KEY // %buyout recommend  
+  pd[i][col++] = BLANK_KEY // BUYOUT DATE UPDATED
+  pd[i][col++] = BLANK_KEY // NEED CORRECTION     
+  pd[i][col++] = BLANK_KEY // SUMMARY 
+  pd[i][col++] = BLANK_KEY // EFF REC 
+  pd[i][col++] = BLANK_KEY // NEED CORR?
+  pd[i][col++] = BLANK_KEY // APP REC 
+  pd[i][col++] = BLANK_KEY // NEED CORR?
+  pd[i][col++] = BLANK_KEY // APP PRICE REC 
+  pd[i][col++] = BLANK_KEY // NEED CORR?
+  pd[i][col++] = BLANK_KEY // BUY REC 
+  pd[i][col++] = BLANK_KEY // NEED CORR?  
+  pd[i][col++] = BLANK_KEY // LINK
+
+}
+
+op_analyze_kpi_v2.print_pd_operator = function(pd, operator) {
+
+  var i = pd.length;
+  var col = 0;
+  pd[i] = Array();
+
+  pd[i][col++] = op_analyze_kpi_v2.ROW_TITLE_OPERATOR;
+  pd[i][col++] = BLANK_KEY;
+  pd[i][col++] = BLANK_KEY;
+  pd[i][col++] = BLANK_KEY;
+  
+  pd[i][col++] = BLANK_KEY;
+
+
+  pd[i][col++] = operator.key;
+
+  pd[i][col++] = operator.kpi_stat.calls_group_effective_count;
+  pd[i][col++] = operator.kpi_stat.leads_effective_count;
+  pd[i][col++] = print_float(operator.kpi_stat.effective_percent);
+
+  pd[i][col++] = BLANK_KEY // BLANK
+  pd[i][col++] = print_float(operator.kpi_stat.effective_rate) // EFF FACT
+  pd[i][col++] = BLANK_KEY // EFF PLAN
+  pd[i][col++] = BLANK_KEY // EFF PLAN updated
+  pd[i][col++] = BLANK_KEY // EFF PLAN type
+  pd[i][col++] = BLANK_KEY // EFF RECOMMEND
+  pd[i][col++] = BLANK_KEY // EFF DATE UPDATED
+  pd[i][col++] = BLANK_KEY // NEED CORRECTION
+  pd[i][col++] = BLANK_KEY // % approve 
+  pd[i][col++] = BLANK_KEY // leads count
+  pd[i][col++] = BLANK_KEY // leads approved
+  pd[i][col++] = BLANK_KEY // % approve
+  pd[i][col++] = BLANK_KEY // % approve plan
+  pd[i][col++] = BLANK_KEY // % approve recommend
+  pd[i][col++] = BLANK_KEY // APP DATE UPDATED
+  pd[i][col++] = BLANK_KEY // NEED CORRECTION
+  pd[i][col++] = BLANK_KEY // %buyout
+  pd[i][col++] = BLANK_KEY // %buyout amount
+  pd[i][col++] = BLANK_KEY // %buyout fact
+  pd[i][col++] = BLANK_KEY // %buyout plan
+  pd[i][col++] = BLANK_KEY // %buyout recommend  
+  pd[i][col++] = BLANK_KEY // BUYOUT DATE UPDATED
+  pd[i][col++] = BLANK_KEY // NEED CORRECTION    
+  pd[i][col++] = BLANK_KEY // SUMMARY 
+  pd[i][col++] = BLANK_KEY // EFF REC 
+  pd[i][col++] = BLANK_KEY // NEED CORR?
+  pd[i][col++] = BLANK_KEY // APP REC 
+  pd[i][col++] = BLANK_KEY // NEED CORR?
+  pd[i][col++] = BLANK_KEY // APP PRICE REC 
+  pd[i][col++] = BLANK_KEY // NEED CORR?
+  pd[i][col++] = BLANK_KEY // BUY REC 
+  pd[i][col++] = BLANK_KEY // NEED CORR?
+  pd[i][col++] = BLANK_KEY // LINK
+
+}
+
+function checkDB() {
+  Logger.log("FROM_DB = " + FROM_DB);
+}
+
+function op_analyze_kpi_v2_run() {
+  var sheet = SpreadsheetApp.getActive().getSheetByName(op_analyze_kpi_v2_sheet_name); 
+  engine.clear_sheet(op_analyze_kpi_v2_sheet_name, op_analyze_kpi_v2.get_vars().range_full);  
+  sheet.getRange(op_analyze_kpi_v2.get_vars().range_full).setBackground('yellow')    
+
+
+  var conn = conn_to_db()
+  var stmt = conn.createStatement()  
+
+  var stat = new op_analyze_kpi_v2.stat(stmt);
+  stat.finalyze();
+
+  var grouper = new engine_rows_grouper.engine();
+  var warnings = new warning_notes.engine();
+
+  var col = 0;
+  var row = 0;
+  var pd = Array();
+  pd[row] = Array();
+  pd[row][col++] = "Тип данных"
+  pd[row][col++] = "Категория"
+  pd[row][col++] = "ID Оффер"
+  pd[row][col++] = "Оффер"
+  pd[row][col++] = "ID Вебмастер"
+  pd[row][col++] = "Оператор"
+
+  pd[row][col++] = "Ко-во звонков (эфф)"
+  pd[row][col++] = "Ко-во продаж (эфф)"
+  pd[row][col++] = "% эффективности"
+  pd[row][col++] = BLANK_KEY
+  pd[row][col++] = "Эфф. факт"
+  pd[row][col++] = "Эфф. план"
+  pd[row][col++] = "Дата обновления"
+  pd[row][col++] = "Тип Плана"
+  pd[row][col++] = "Эфф. рекоммендация"
+  pd[row][col++] = "Дата обновления"
+  pd[row][col++] = "Требуется коррекция"
+  pd[row][col++] = BLANK_KEY // % approve 
+  pd[row][col++] = "Ко-во лидов (без треша)"
+  pd[row][col++] = "Ко-во аппрувов"
+  pd[row][col++] = "% аппрува факт"
+  pd[row][col++] = "% аппрува план"
+  pd[row][col++] = "% аппрува рекоммендация"
+  pd[row][col++] = "Дата обновления"
+  pd[row][col++] = "Требуется коррекция"
+  pd[row][col++] = "% выкупа"
+  pd[row][col++] = "Ко-во выкупов"
+  pd[row][col++] = "% выкупа факт"
+  pd[row][col++] = "% выкупа план"
+  pd[row][col++] = "% выкупа рекоммендация"  
+  pd[row][col++] = "Дата обновления"
+  pd[row][col++] = "Требуется коррекция"
+  pd[row][col++] = "[СВОД]"
+  pd[row][col++] = "Эфф. Рек."
+  pd[row][col++] = "Коррекция?"
+  pd[row][col++] = "Апп. Рек."
+  pd[row][col++] = "Коррекция?"
+  pd[row][col++] = "Чек Рек."
+  pd[row][col++] = "Коррекция?"
+  pd[row][col++] = "Выкуп. Рек."
+  pd[row][col++] = "Коррекция?"
+  pd[row][col++] = "Ссылка"
+
+  for (var i = 0; i < op_analyze_kpi_v2.get_vars().range_start_row; ++i)
+    engine.fill_blank_pd(pd, BLANK_KEY);
+
+
+  for (var k_category in stat.category) {
+    var category = stat.category[k_category]
+    if (!(
+        category.kpi_stat.calls_group_effective_count || 
+        op_analyze_kpi_v2.get_vars().output == '--' || 
+        category.lead_container.leads_non_trash_count
+      ))
+      continue;
+
+    engine.fill_blank_pd(pd, BLANK_KEY);    
+    op_analyze_kpi_v2.print_pd_category(pd, category);
+    var row_category = pd.length;
+
+    warnings.push_white(pd.length, op_analyze_kpi_v2.get_vars().col_recommendation,
+      category.operator_recommended.comment + "\n" + category.recommended_effeciency.comment);
+
+    warnings.push_white(pd.length, op_analyze_kpi_v2.get_vars().col_approve_recommendation, 
+      category.recommended_approve.comment
+    )
+
+    warnings.push_white(pd.length, op_analyze_kpi_v2.get_vars().col_buyout_recommendation, 
+      category.recommended_buyout.comment
+    )
+
+
+    engine.fill_blank_pd(pd, 'Операторы');
+    var row_cat_op = pd.length;
+    for (var k_operator in category.operator_sorted) {
+      var operator = category.operator_sorted[k_operator];
+      op_analyze_kpi_v2.print_pd_operator(pd, operator);
+
+    }
+    grouper.push_group(row_cat_op, pd.length);
+
+    engine.fill_blank_pd(pd, 'Офферы');
+    var row_offer = pd.length;
+    for (var k_offer in category.offer) {
+      var offer = category.offer[k_offer];
+      if (op_analyze_kpi_v2.get_vars().output == 'Есть активность')
+        if (offer.kpi_stat.calls_group_effective_count < 5 && !category.lead_container.leads_non_trash_count < 5)
+          continue;
+
+      op_analyze_kpi_v2.print_pd_offer(pd, offer, category);
+
+      warnings.push_white(pd.length, op_analyze_kpi_v2.get_vars().col_recommendation + 1,
+        offer.kpi_eff_need_correction_str);
+      warnings.push_white(pd.length, op_analyze_kpi_v2.get_vars().col_approve_recommendation + 2,
+        offer.kpi_app_need_correction_str);
+      warnings.push_white(pd.length, op_analyze_kpi_v2.get_vars().col_buyout_recommendation + 2,
+        offer.kpi_buyout_need_correction_str);
+
+      warnings.push_white(pd.length, op_analyze_kpi_v2.get_vars().col_buyout_recommendation + 5,
+        offer.kpi_eff_need_correction_str);
+      warnings.push_white(pd.length, op_analyze_kpi_v2.get_vars().col_buyout_recommendation + 7,
+        offer.kpi_app_need_correction_str);
+      warnings.push_white(pd.length, op_analyze_kpi_v2.get_vars().col_buyout_recommendation + 9,
+        offer.kpi_confirmation_price_need_correction_str);
+
+      warnings.push_white(pd.length, op_analyze_kpi_v2.get_vars().col_buyout_recommendation + 11,
+        offer.kpi_buyout_need_correction_str);
+
+    } 
+    grouper.push_group(row_offer, pd.length)   
+
+    engine.fill_blank_pd(pd, 'Вебмастера');
+    var row_aff = pd.length;
+    for (var k_aff in category.aff) {
+      var aff = category.aff[k_aff];
+      op_analyze_kpi_v2.print_pd_aff(pd, aff);
+
+    } 
+    grouper.push_group(row_aff, pd.length)   
+    grouper.push_group(row_category, pd.length);
+  }
+
+  sheet.getRange(op_analyze_kpi_v2.get_vars().range_start).offset(0,0, pd.length, pd[0].length).setValues(pd);
+  sheet.getRange(op_analyze_kpi_v2.get_vars().range_full).setBackground(null)    
+  if (op_analyze_kpi_v2.get_vars().group_rows == "Да")
+    grouper.proceed(sheet);
+  warnings.proceed(sheet);
+
+}
