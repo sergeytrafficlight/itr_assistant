@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KPI Анализатор - Таблица</title>
+    <link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/luckysheet@2.1.13/dist/plugins/css/pluginsCss.css' />
+    <link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/luckysheet@2.1.13/dist/plugins/plugins.css' />
+    <link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/luckysheet@2.1.13/dist/css/luckysheet.css' />
+    <link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/luckysheet@2.1.13/dist/assets/iconfont/iconfont.css' />
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #202124;
+            color: #e8eaed;
+            font-family: 'Google Sans', Roboto, Arial, sans-serif;
+        }
+        #toolbar {
+            background-color: #3c4043;
+            padding: 10px;
+            border-bottom: 1px solid #5f6368;
+        }
+        #luckysheet {
+            width: 100%;
+            height: calc(100vh - 60px);
+            margin: 0;
+            padding: 0;
+        }
+        .toolbar-btn {
+            background-color: #4285f4;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            margin: 0 5px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .toolbar-btn:hover {
+            background-color: #3367d6;
+        }
+    </style>
+</head>
+<body>
+    <div id="toolbar">
+        <button class="toolbar-btn" onclick="saveSpreadsheet()">Сохранить</button>
+        <button class="toolbar-btn" onclick="createPivot()">Создать сводную</button>
+        <button class="toolbar-btn" onclick="exportToExcel()">Экспорт в Excel</button>
+        <button class="toolbar-btn" onclick="loadKpiData()">Загрузить KPI данные</button>
+    </div>
+    <div id="luckysheet"></div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/luckysheet@2.1.13/dist/plugins/js/plugin.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/luckysheet@2.1.13/dist/luckysheet.umd.js"></script>
+    <script>
+        const spreadsheetId = {{ spreadsheet_id }};
+        
+        // Инициализация Luckysheet
+        function initSpreadsheet() {
+            luckysheet.create({
+                container: 'luckysheet',
+                lang: 'ru',
+                showinfobar: false,
+                row: 100,
+                column: 50,
+                allowEdit: true,
+                enableAddRow: true,
+                enableAddBackTop: true,
+                hook: {
+                    onCellUpdated: onCellUpdated
+                }
+            });
+            
+            loadSpreadsheetData();
+        }
+        
+        // Загрузка данных таблицы
+        async function loadSpreadsheetData() {
+            try {
+                const response = await fetch(`/api/spreadsheets/${spreadsheetId}/`);
+                const data = await response.json();
+                
+                if (data.sheets && data.sheets.length > 0) {
+                    const sheetData = data.sheets[0].data || {};
+                    luckysheet.load(sheetData);
+                }
+            } catch (error) {
+                console.error('Error loading spreadsheet:', error);
+            }
+        }
+        
+        // Обработка обновления ячейки
+        function onCellUpdated(cell, value) {
+            // Отправка обновления на сервер через WebSocket
+            if (window.socket) {
+                window.socket.send(JSON.stringify({
+                    type: 'cell_update',
+                    cell: {
+                        sheet_id: 1, // TODO: получить актуальный ID листа
+                        row: cell.r,
+                        col: cell.c,
+                        value: value
+                    }
+                }));
+            }
+        }
+        
+        // Сохранение таблицы
+        async function saveSpreadsheet() {
+            const data = luckysheet.getAllSheets();
+            
+            try {
+                await fetch(`/api/spreadsheets/${spreadsheetId}/`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        data: data
+                    })
+                });
+                alert('Таблица сохранена!');
+            } catch (error) {
+                console.error('Error saving spreadsheet:', error);
+                alert('Ошибка при сохранении!');
+            }
+        }
+        
+        // Создание сводной таблицы
+        function createPivot() {
+            alert('Функция создания сводной таблицы будет реализована в следующей версии');
+        }
+        
+        // Экспорт в Excel
+        function exportToExcel() {
+            luckysheet.getLuckysheetfile();
+        }
+        
+        // Загрузка KPI данных
+        async function loadKpiData() {
+            try {
+                const response = await fetch('/api/kpi-data/analytics/');
+                const data = await response.json();
+                
+                // TODO: Заполнение таблицы KPI данными
+                console.log('KPI Data loaded:', data);
+                alert('KPI данные загружены!');
+            } catch (error) {
+                console.error('Error loading KPI data:', error);
+                alert('Ошибка при загрузке KPI данных!');
+            }
+        }
+        
+        // Инициализация WebSocket
+        function initWebSocket() {
+            const wsScheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${wsScheme}//${window.location.host}/ws/spreadsheet/${spreadsheetId}/`;
+            
+            window.socket = new WebSocket(wsUrl);
+            
+            window.socket.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                
+                if (data.type === 'cell_updated') {
+                    // Обновление ячейки в реальном времени
+                    const cell = data.cell;
+                    luckysheet.setCellValue(cell.row, cell.col, cell.value);
+                }
+            };
+        }
+        
+        // Инициализация при загрузке страницы
+        document.addEventListener('DOMContentLoaded', function() {
+            initSpreadsheet();
+            initWebSocket();
+        });
+    </script>
+</body>
+</html>

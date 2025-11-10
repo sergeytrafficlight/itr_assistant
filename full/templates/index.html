@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KPI Анализатор - Google Sheets Аналог</title>
+    <link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/luckysheet@2.1.13/dist/plugins/css/pluginsCss.css' />
+    <link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/luckysheet@2.1.13/dist/plugins/plugins.css' />
+    <link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/luckysheet@2.1.13/dist/css/luckysheet.css' />
+    <link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/luckysheet@2.1.13/dist/assets/iconfont/iconfont.css' />
+    <style>
+        :root {
+            --gs-bg: #202124;
+            --gs-cell-bg: #3c4043;
+            --gs-border: #5f6368;
+            --gs-accent: #4285f4;
+            --gs-text: #e8eaed;
+            --gs-active: #dadce0;
+            --gs-active-text: #202124;
+        }
+        
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: var(--gs-bg);
+            color: var(--gs-text);
+            font-family: 'Google Sans', Roboto, Arial, sans-serif;
+            overflow: hidden;
+        }
+        
+        #app-container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        
+        #toolbar {
+            background-color: var(--gs-cell-bg);
+            padding: 10px 20px;
+            border-bottom: 1px solid var(--gs-border);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .toolbar-btn {
+            background-color: var(--gs-accent);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.2s;
+        }
+        
+        .toolbar-btn:hover {
+            background-color: #3367d6;
+        }
+        
+        .toolbar-btn.secondary {
+            background-color: var(--gs-border);
+        }
+        
+        .toolbar-btn.secondary:hover {
+            background-color: #4e5256;
+        }
+        
+        #spreadsheet-container {
+            flex: 1;
+            position: relative;
+        }
+        
+        #luckysheet {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+        }
+        
+        /* Кастомные стили для темной темы Google Sheets */
+        .luckysheet-info-container {
+            background-color: var(--gs-cell-bg) !important;
+            border-color: var(--gs-border) !important;
+        }
+        
+        .luckysheet-cell {
+            background-color: var(--gs-cell-bg) !important;
+            color: var(--gs-text) !important;
+            border-color: var(--gs-border) !important;
+        }
+        
+        .luckysheet-cell-focus {
+            border-color: var(--gs-accent) !important;
+            background-color: var(--gs-active) !important;
+            color: var(--gs-active-text) !important;
+        }
+        
+        .luckysheet-sheet-area {
+            background-color: var(--gs-bg) !important;
+        }
+        
+        .luckysheet-row-header, .luckysheet-col-header {
+            background-color: var(--gs-cell-bg) !important;
+            color: var(--gs-text) !important;
+            border-color: var(--gs-border) !important;
+        }
+        
+        .luckysheet-menu-button {
+            background-color: var(--gs-cell-bg) !important;
+            color: var(--gs-text) !important;
+            border-color: var(--gs-border) !important;
+        }
+        
+        .luckysheet-formula-search-input {
+            background-color: var(--gs-cell-bg) !important;
+            color: var(--gs-text) !important;
+            border-color: var(--gs-border) !important;
+        }
+        
+        .loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(32, 33, 36, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            color: var(--gs-text);
+            font-size: 18px;
+        }
+        
+        .kpi-dashboard {
+            background-color: var(--gs-cell-bg);
+            padding: 15px;
+            margin: 10px;
+            border-radius: 8px;
+            border: 1px solid var(--gs-border);
+        }
+        
+        .kpi-metric {
+            display: inline-block;
+            margin: 0 15px;
+            text-align: center;
+        }
+        
+        .kpi-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: var(--gs-accent);
+        }
+        
+        .kpi-label {
+            font-size: 12px;
+            color: var(--gs-text);
+            opacity: 0.8;
+        }
+    </style>
+</head>
+<body>
+    <div id="app-container">
+        <div id="toolbar">
+            <button class="toolbar-btn" onclick="saveSpreadsheet()">💾 Сохранить</button>
+            <button class="toolbar-btn" onclick="loadKpiTemplate()">📊 Загрузить KPI шаблон</button>
+            <button class="toolbar-btn" onclick="createPivotTable()">📈 Создать сводную</button>
+            <button class="toolbar-btn" onclick="exportToExcel()">📤 Экспорт в Excel</button>
+            <button class="toolbar-btn secondary" onclick="showKpiDashboard()">📋 KPI Дашборд</button>
+            <button class="toolbar-btn secondary" onclick="toggleTheme()">🌙 Тема</button>
+            
+            <div style="flex: 1;"></div>
+            
+            <span id="connection-status" style="color: #34a853;">● Подключено</span>
+        </div>
+        
+        <div id="kpi-dashboard" class="kpi-dashboard" style="display: none;">
+            <div class="kpi-metric">
+                <div class="kpi-value" id="total-calls">0</div>
+                <div class="kpi-label">Всего звонков</div>
+            </div>
+            <div class="kpi-metric">
+                <div class="kpi-value" id="total-leads">0</div>
+                <div class="kpi-label">Всего лидов</div>
+            </div>
+            <div class="kpi-metric">
+                <div class="kpi-value" id="cr-rate">0%</div>
+                <div class="kpi-label">Конверсия</div>
+            </div>
+            <div class="kpi-metric">
+                <div class="kpi-value" id="avg-effectiveness">0%</div>
+                <div class="kpi-label">Эффективность</div>
+            </div>
+            <button class="toolbar-btn secondary" onclick="hideKpiDashboard()" style="float: right;">✕ Скрыть</button>
+        </div>
+        
+        <div id="spreadsheet-container">
+            <div id="luckysheet"></div>
+            <div id="loading-overlay" class="loading-overlay" style="display: none;">
+                Загрузка данных...
+            </div>
+        </div>
+    </div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/luckysheet@2.1.13/dist/plugins/js/plugin.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/luckysheet@2.1.13/dist/luckysheet.umd.js"></script>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

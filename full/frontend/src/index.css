@@ -1,0 +1,146 @@
+:root {
+  --gs-bg: #202124;
+  --gs-cell-bg: #3c4043;
+  --gs-border: #5f6368;
+  --gs-accent: #4285f4;
+  --gs-text: #e8eaed;
+  --gs-active: #dadce0;
+  --gs-active-text: #202124;
+  --gs-success: #34a853;
+  --gs-warning: #fbbc05;
+  --gs-error: #ea4335;
+}
+
+[data-theme="light"] {
+  --gs-bg: #ffffff;
+  --gs-cell-bg: #f8f9fa;
+  --gs-border: #dadce0;
+  --gs-accent: #1a73e8;
+  --gs-text: #3c4043;
+  --gs-active: #1a73e8;
+  --gs-active-text: #ffffff;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Google Sans', Roboto, Arial, sans-serif;
+  background-color: var(--gs-bg);
+  color: var(--gs-text);
+  line-height: 1.5;
+  overflow-x: hidden;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.app {
+  min-height: 100vh;
+}
+
+/* Common component styles */
+.button {
+  background-color: var(--gs-accent);
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background-color 0.2s;
+}
+
+.button:hover {
+  background-color: var(--gs-active);
+  color: var(--gs-active-text);
+}
+
+.button.secondary {
+  background-color: var(--gs-border);
+}
+
+.input {
+  background-color: var(--gs-cell-bg);
+  color: var(--gs-text);
+  border: 1px solid var(--gs-border);
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--gs-accent);
+}
+
+.card {
+  background-color: var(--gs-cell-bg);
+  border: 1px solid var(--gs-border);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  color: var(--gs-text);
+}
+
+.error {
+  color: var(--gs-error);
+  padding: 8px;
+  border-radius: 4px;
+  background-color: rgba(234, 67, 53, 0.1);
+}
+
+/* Typography */
+h1, h2, h3, h4, h5, h6 {
+  color: var(--gs-text);
+  margin-bottom: 0.5rem;
+}
+
+p {
+  color: var(--gs-text);
+  margin-bottom: 1rem;
+}
+
+/* Links */
+a {
+  color: var(--gs-accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+/* Selection */
+::selection {
+  background-color: var(--gs-accent);
+  color: white;
+}
+
+/* Focus outline */
+*:focus {
+  outline: 2px solid var(--gs-accent);
+  outline-offset: 2px;
+}
+
+/* Print styles */
+@media print {
+  body {
+    background: white;
+    color: black;
+  }
+  
+  .no-print {
+    display: none !important;
+  }
+}
