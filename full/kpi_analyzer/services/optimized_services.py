@@ -36,24 +36,18 @@ class OptimizedDBService:
 
 
 class OptimizedKPIList:
-    def __init__(self, kpi_plans_data, date_from, date_to):
+    def __init__(self, kpi_plans_data):
         logger.info(f"Инициализация OptimizedKPIList с {len(kpi_plans_data)} планами")
         start_time = time.time()
 
-        self.plans = [KpiPlan(**item) for item in kpi_plans_data]
-        self.date_from = date_from
-        self.date_to = date_to
+        self.plans = [KpiPlan(item) for item in kpi_plans_data]
         self._build_advanced_index()
-        self._operator_kpi_cache = {}  # Кэш для операторов
-
-        # Предзагружаем маппинг оператор -> KPI
-        self._preload_operator_kpi_mapping()
+        self._operator_kpi_cache = {}
 
         execution_time = time.time() - start_time
         logger.info(f"OptimizedKPIList инициализирован за {execution_time:.2f} секунд")
 
     def _build_advanced_index(self):
-        """Расширенное индексирование для быстрого поиска"""
         logger.debug("Построение расширенных индексов для KPI планов")
         start_time = time.time()
 
@@ -79,42 +73,6 @@ class OptimizedKPIList:
         execution_time = time.time() - start_time
         logger.debug(f"Расширенные индексы построены за {execution_time:.2f}с")
 
-    def _preload_operator_kpi_mapping(self):
-        """Предзагрузка маппинга оператор -> KPI план"""
-        logger.info("Предзагрузка маппинга оператор -> KPI план")
-        start_time = time.time()
-
-        try:
-            from .db_service import DBService
-            operator_mappings = DBService.get_operator_kpi_mapping(self.date_from, self.date_to)
-
-            for mapping in operator_mappings:
-                operator_name = mapping['operator_name']
-                if operator_name not in self._operator_kpi_cache:
-                    # Создаем KPI план из маппинга
-                    plan_data = {
-                        'call_eff_kpi_id': None,
-                        'call_eff_period_date': self.date_to,
-                        'call_eff_offer_id': mapping['offer_id'],
-                        'call_eff_affiliate_id': mapping['affiliate_id'],
-                        'call_eff_operator_efficiency': mapping['operator_efficiency'],
-                        'planned_approve': mapping['planned_approve'],
-                        'planned_buyout': mapping['planned_buyout'],
-                        'confirmation_price': mapping['confirmation_price'],
-                        'update_date': None,
-                        'operator_effeciency_update_date': None,
-                        'planned_approve_update_date': None,
-                        'planned_buyout_update_date': None
-                    }
-                    self._operator_kpi_cache[operator_name.lower()] = KpiPlan(plan_data)
-
-            execution_time = time.time() - start_time
-            logger.info(
-                f"Предзагружено {len(self._operator_kpi_cache)} маппингов оператор->KPI за {execution_time:.2f}с")
-
-        except Exception as e:
-            logger.error(f"Ошибка предзагрузки маппинга оператор->KPI: {str(e)}")
-
     def _parse_date(self, date_str):
         if not date_str:
             return None
@@ -126,7 +84,6 @@ class OptimizedKPIList:
             return None
 
     def find_kpi(self, affiliate_id, offer_id, date_str):
-        """ОПТИМИЗИРОВАННЫЙ поиск KPI с приоритетом по скорости"""
         start_time = time.time()
 
         try:
@@ -134,22 +91,17 @@ class OptimizedKPIList:
             if not target_date:
                 return None
 
-            # 🔥 СТРАТЕГИЯ 1: Если ищем для оператора (offer_id - это имя оператора)
             if offer_id and isinstance(offer_id, str) and not offer_id.isdigit():
                 operator_name = offer_id.lower()
-
-                # Проверяем кэш предзагруженных маппингов
                 if operator_name in self._operator_kpi_cache:
                     execution_time = time.time() - start_time
                     logger.debug(f"KPI для оператора '{operator_name}' найден в кэше за {execution_time:.3f}с")
                     return self._operator_kpi_cache[operator_name]
 
-                # 🔥 СТРАТЕГИЯ 2: Быстрый поиск через активность оператора
                 fast_plan = self._find_kpi_by_operator_activity_fast(operator_name, target_date)
                 if fast_plan:
                     execution_time = time.time() - start_time
-                    logger.debug(
-                        f"KPI для оператора '{operator_name}' найден через активность за {execution_time:.3f}с")
+                    logger.debug(f"KPI для оператора '{operator_name}' найден через активность за {execution_time:.3f}с")
                     return fast_plan
 
                 execution_time = time.time() - start_time
@@ -158,7 +110,6 @@ class OptimizedKPIList:
 
             date_key = str(target_date)
 
-            # 🔥 СТРАТЕГИЯ 3: Точное совпадение по дате + офферу
             if offer_id and str(offer_id).isdigit():
                 if date_key in self._date_offer_index and str(offer_id) in self._date_offer_index[date_key]:
                     plans = self._date_offer_index[date_key][str(offer_id)]
@@ -167,7 +118,6 @@ class OptimizedKPIList:
                         logger.debug(f"KPI найден по точному совпадению за {execution_time:.3f}с")
                         return plans[0]
 
-            # 🔥 СТРАТЕГИЯ 4: Поиск по ближайшей дате
             if offer_id and str(offer_id).isdigit():
                 offer_plans = self._offer_index.get(str(offer_id), [])
                 if offer_plans:
@@ -180,7 +130,6 @@ class OptimizedKPIList:
                     logger.debug(f"KPI найден по ближайшей дате за {execution_time:.3f}с")
                     return nearest_plan
 
-            # 🔥 СТРАТЕГИЯ 5: Любой план на нужную дату
             if date_key in self._date_index and self._date_index[date_key]:
                 execution_time = time.time() - start_time
                 logger.debug(f"Использован общий план за дату за {execution_time:.3f}с")
@@ -196,10 +145,8 @@ class OptimizedKPIList:
             return None
 
     def _find_kpi_by_operator_activity_fast(self, operator_name, target_date):
-        """Быстрый поиск KPI через активность оператора (без сложных JOIN)"""
         try:
             with connections['itrade'].cursor() as cursor:
-                # Упрощенный запрос - только основные таблицы
                 sql = """
                     SELECT DISTINCT tl_lead.offer_id
                     FROM partners_lvlead lv
@@ -214,7 +161,6 @@ class OptimizedKPIList:
 
                 if result and result[0]:
                     offer_id = result[0]
-                    # Ищем KPI план для этого оффера
                     return self.find_kpi(None, offer_id, target_date)
 
         except Exception as e:
@@ -226,7 +172,6 @@ class OptimizedKPIList:
 class BatchOperatorProcessor:
     @staticmethod
     def get_operator_activity_bulk(operator_names, target_date):
-        """Упрощенная версия - только базовая активность"""
         if not operator_names:
             return {}
 

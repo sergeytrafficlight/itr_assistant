@@ -54,37 +54,51 @@ class CommonItem:
         self.kpi_confirmation_price_need_correction_str = comment
 
     def finalyze(self, kpi_list):
+        """ПОЛНАЯ ЛОГИКА ФИНАЛИЗАЦИИ КАК В ЭТАЛОНЕ"""
+        print(f"🔍 Finalyze CommonItem: {self.key}")
+
         self.kpi_stat.finalyze(kpi_list)
         self.lead_container.finalyze()
-        self.kpi_operator_efficiency_fact = self.kpi_stat.effective_rate
 
+        # 🔥 КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: правильный расчет expecting_effective_rate
         if self.kpi_current_plan and self.kpi_current_plan.operator_efficiency:
             self.kpi_stat.expecting_effective_rate = self.kpi_current_plan.operator_efficiency
+            print(f"✅ Установлен expecting_effective_rate: {self.kpi_stat.expecting_effective_rate}")
         else:
             self.kpi_stat.expecting_effective_rate = 0.0
+            print(f"❌ expecting_effective_rate не установлен")
 
+        # 🔥 ТОЧНЫЙ РАСЧЕТ КАК В ЭТАЛОНЕ
+        self.kpi_operator_efficiency_fact = self.kpi_stat.effective_rate
+
+        # Расчет ожидаемых лидов как в эталоне
         if self.kpi_current_plan is not None:
-            self.expecting_approve_leads = self.lead_container.leads_non_trash_count * self.kpi_current_plan.planned_approve
-            self.expecting_buyout_leads = self.lead_container.leads_approved_count * self.kpi_current_plan.planned_buyout
-        if self.kpi_current_plan and self.kpi_current_plan.planned_approve is not None:
-            self.expecting_approve_leads = self.lead_container.leads_non_trash_count * self.kpi_current_plan.planned_approve
-        else:
-            self.expecting_approve_leads = 0
+            if self.kpi_current_plan.planned_approve:
+                self.expecting_approve_leads = self.lead_container.leads_non_trash_count * (
+                            self.kpi_current_plan.planned_approve / 100)
+            if self.kpi_current_plan.planned_buyout:
+                self.expecting_buyout_leads = self.lead_container.leads_approved_count * (
+                            self.kpi_current_plan.planned_buyout / 100)
 
-        if self.kpi_current_plan and self.kpi_current_plan.planned_buyout is not None:
-            self.expecting_buyout_leads = self.lead_container.leads_non_trash_count * self.kpi_current_plan.planned_buyout
-        else:
-            self.expecting_buyout_leads = 0
+        # 🔥 ПОЛНАЯ ЛОГИКА ПРОВЕРКИ КОРРЕКЦИИ КАК В ЭТАЛОНЕ
         if self.kpi_current_plan is None:
             self.set_kpi_eff_need_correction("KPI не найден")
+            print(f"❌ KPI не найден для {self.key}")
         elif self.recommended_effeciency.value is None:
             self.set_kpi_eff_need_correction("Не могу определить рекоммендацию")
+            print(f"❌ Нет рекомендации для {self.key}")
         else:
-            if abs(self.recommended_effeciency.value - self.kpi_current_plan.operator_efficiency) > 0.2:
+            # ТОЧНО КАК В ЭТАЛОНЕ: разница более 0.2 требует коррекции
+            diff = abs(self.recommended_effeciency.value - self.kpi_current_plan.operator_efficiency)
+            print(
+                f"🔍 Сравнение эффективности: рек={self.recommended_effeciency.value}, план={self.kpi_current_plan.operator_efficiency}, diff={diff}")
+
+            if diff > 0.2:
                 self.set_kpi_eff_need_correction(
                     f"Отличия в рек. эффективности и плановой более чем на 0.2, "
                     f"рек:{self.recommended_effeciency.value} план: {self.kpi_current_plan.operator_efficiency}"
                 )
+                print(f"⚠️ Требуется коррекция эффективности для {self.key}")
             elif (self.kpi_current_plan.operator_efficiency is None or
                   self.kpi_current_plan.operator_efficiency == "" or
                   self.kpi_current_plan.operator_efficiency == 0):
@@ -180,9 +194,6 @@ class CategoryItem:
         self.kpi_stat.finalyze(kpi_list)
         self.lead_container.finalyze()
 
-        analysis_date_str = self.analysis_date.strftime('%Y-%m-%d') if hasattr(self.analysis_date, 'strftime') else str(
-            self.analysis_date)
-
         for operator in self.operator.values():
             operator.kpi_stat.finalyze(kpi_list)
             operator.lead_container.finalyze()
@@ -211,7 +222,9 @@ class CategoryItem:
         self.max_confirmation_price = 0
 
         for offer in self.offer.values():
-            offer.kpi_current_plan = kpi_list.find_kpi(None, offer.key, analysis_date_str)
+            offer.kpi_current_plan = kpi_list.find_kpi(None, offer.key,
+                                                       self.analysis_date.strftime('%Y-%m-%d') if hasattr(
+                                                           self.analysis_date, 'strftime') else str(self.analysis_date))
             offer.recommended_effeciency = self.recommended_effeciency
             offer.finalyze(kpi_list)
 
@@ -237,13 +250,8 @@ class CategoryItem:
                 self.lead_container.leads_non_trash_count
             )
 
-            # ТОЧНОЕ СООТВЕТСТВИЕ ЭТАЛОНУ - всегда вычисляем perhaps_app_count
-            if self.kpi_stat.effective_percent > 0:
-                perhaps_app_count = ((self.lead_container.leads_approved_count / (
-                        self.kpi_stat.effective_percent / 100))
-                                     - self.lead_container.leads_approved_count) * 0.3 + self.lead_container.leads_approved_count
-            else:
-                perhaps_app_count = self.lead_container.leads_approved_count
+            perhaps_app_count = ((self.lead_container.leads_approved_count / (self.kpi_stat.effective_percent / 100))
+                                 - self.lead_container.leads_approved_count) * 0.3 + self.lead_container.leads_approved_count
 
             recommend_approve = safe_div(perhaps_app_count, self.lead_container.leads_non_trash_count) * 100
 
@@ -268,7 +276,7 @@ class CategoryItem:
             )
 
         self.recommended_buyout = Recommendation(
-            self.buyout_percent_fact * 1.02 if self.buyout_percent_fact else 0,
+            self.buyout_percent_fact * 1.02,
             f"Текущий выкуп: {self.buyout_percent_fact}, поднимаем на 2%"
         )
 

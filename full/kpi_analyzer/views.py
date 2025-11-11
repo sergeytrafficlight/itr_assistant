@@ -10,12 +10,13 @@ from django.db import connections
 from django_filters.rest_framework import DjangoFilterBackend
 import json
 from rest_framework.pagination import PageNumberPagination
-from datetime import datetime
+from datetime import datetime, date
+import time
 
 from .services.output_formatter import KPIOutputFormatter
 from .services.compatibility import GoogleScriptCompatibility
 from .services.db_service import DBService
-from .services.optimized_services import OptimizedDBService, BatchOperatorProcessor, QueryMonitor
+from .services.optimized_services import OptimizedDBService, BatchOperatorProcessor, QueryMonitor, OptimizedKPIList
 from .services.kpi_analyzer import Grouper, Warnings
 from .models import (
     Spreadsheet, Sheet, Cell, Formula, PivotTable,
@@ -70,8 +71,6 @@ class LegacyFilterProcessor:
         has_calls = offer_data.get('kpi_stat', {}).get('calls_group_effective_count', 0) > 0
         has_leads = offer_data.get('kpi_stat', {}).get('leads_effective_count', 0) > 0
         return has_calls or has_leads
-
-
 
 
 def prepare_sql_array(values):
@@ -505,8 +504,6 @@ class KPIAnalyticsViewSet(viewsets.ViewSet):
         except Exception as e:
             logger.error(f"Ошибка при получении списка офферов: {str(e)}")
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-            logger.error(f"Ошибка при получении списка офферов: {str(e)}")
-            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=False, methods=['get'])
     def kpi_plans_full(self, request):
@@ -524,6 +521,7 @@ class KPIAnalyticsViewSet(viewsets.ViewSet):
         except Exception as e:
             logger.error(f"Ошибка при получении KPI планов: {str(e)}")
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 class KPIAdvancedAnalysisViewSet(viewsets.ViewSet):
     permission_classes = [AllowAny]
@@ -714,7 +712,6 @@ class KPIAdvancedAnalysisViewSet(viewsets.ViewSet):
                         cat.finalyze(self.kpi_list)
                     except Exception as e:
                         logger.error(f"Ошибка при финализации категории {cat.key}: {str(e)}")
-                        # Продолжаем обработку других категорий даже если одна упала
 
         stat = KPIStat(kpi_list, analysis_date)
         for c in calls_data: stat.push_call(c)

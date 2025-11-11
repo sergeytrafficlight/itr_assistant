@@ -17,10 +17,8 @@ class RecommendationEngine:
         self.calls_count_for_analyze = calls_count_for_analyze
 
     def get_operators_for_recommendations(self, operators):
-        """Аналог op_analyze_kpi_v2.get_operators_for_recommendations"""
         eff_operators = 0
 
-        # Считаем эффективных операторов
         for operator in operators:
             if (operator.kpi_stat.effective_rate > 0.0 and
                     operator.kpi_stat.calls_group_effective_count >= self.calls_count_for_analyze):
@@ -28,7 +26,6 @@ class RecommendationEngine:
 
         comment = f"Операторов для анализа всего: {eff_operators}\n"
 
-        # Определяем количество операторов для расчета
         eff_operators_count = round(eff_operators * 0.4)
         if eff_operators_count < 3:
             return Recommendation(None, comment + f"Недостаточно операторов для расчета плана ({eff_operators_count})")
@@ -36,7 +33,6 @@ class RecommendationEngine:
         if eff_operators_count > 5:
             eff_operators_count = 5
 
-        # Выбираем топ операторов
         top_operators = []
         total_calls = 0
         total_leads = 0
