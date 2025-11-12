@@ -32,7 +32,7 @@ from .serializers import (
 from .formula_engine import FormulaEngine
 from .pivot_engine import PivotEngine
 
-from .services.statistics import safe_div, CallEfficiencyStat, LeadContainerStat
+from .services.statistics import safe_div, CallEfficiencyStat, LeadContainerStat, AggregatedCallEfficiencyStat,GlobalLeadContainerStat
 from .services.recommendation_engine import RecommendationEngine, Recommendation
 from .services.kpi_analyzer import CommonItem, CategoryItem, OptimizedKPIList, KpiPlan
 from .services.optimized_services import (
@@ -347,6 +347,11 @@ class KPIAnalyticsViewSet(viewsets.ViewSet):
                     LEFT JOIN partners_subsystem AS subsystem ON subsystem.id = tl_lead.subsystem_id
                     WHERE DATE_ADD(lv.approved_at, INTERVAL 3 HOUR) BETWEEN %s AND %s
                       AND (group_offer.name NOT IN ('Архив', 'Входящая линия') OR group_offer.name IS NULL)
+                      AND EXISTS (
+                          SELECT 1 FROM partners_atscallevent 
+                          WHERE partners_atscallevent.lvlead_id = lv.id 
+                          AND partners_atscallevent.billsec >= 30
+                      )
                 """
                 params = [filters['date_from'], filters['date_to']]
                 if filters.get('category'):
@@ -381,21 +386,35 @@ class KPIAnalyticsViewSet(viewsets.ViewSet):
             connection = connections['itrade']
             with connection.cursor() as cursor:
                 sql = """
-                    SELECT COALESCE(group_offer.name, 'Без категории') as category_name,
-                           COALESCE(offer.id, 0) as offer_id,
-                           COALESCE(pt.webmaster_id, 0) as aff_id,
-                           COUNT(CASE WHEN lv.buyout_at IS NOT NULL THEN 1 END) as buyout_count,
-                           COUNT(*) as total_leads
+                    SELECT
+                        crm_leads_crmlead.id as lead_container_crm_lead_id,
+                        LEFT(DATE_ADD(lv.created_at, INTERVAL 3 HOUR), 19) as lead_container_created_at,
+                        LEFT(DATE_ADD(lv.approved_at, INTERVAL 3 HOUR), 19) as lead_container_approved_at,
+                        LEFT(DATE_ADD(lv.canceled_at, INTERVAL 3 HOUR), 19) as lead_container_canceled_at,
+                        LEFT(DATE_ADD(lv.buyout_at, INTERVAL 3 HOUR), 19) as lead_container_buyout_at,
+                        lv_status.status_verbose as lead_container_status_verbose,
+                        lv_status.status_group as lead_container_status_group,
+                        pt.is_trash as lead_container_is_trash,
+                        LEFT(DATE_ADD(lv.created_at, INTERVAL 27 HOUR), 19) as lead_container_lead_ttl_till,
+                        LEFT(DATE_ADD(NOW(), INTERVAL 3 HOUR), 19) as lead_container_now,
+                        offer.id as offer_id,
+                        offer.name as offer_name,
+                        pt.webmaster_id as aff_id,
+                        group_offer.name as category_name
                     FROM partners_lvlead lv
+                    LEFT JOIN crm_leads_crmlead ON crm_leads_crmlead.lvlead_id = lv.id
                     LEFT JOIN partners_tllead pt ON lv.tl_id = pt.external_id
-                    LEFT JOIN partners_offer offer ON pt.offer_id = offer.id
+                    LEFT JOIN partners_lvleadstatuses AS lv_status ON lv.leadvertex_status_id = lv_status.id
+                    LEFT JOIN partners_offer as offer ON pt.offer_id = offer.id
                     LEFT JOIN partners_assignedoffer assigned_offer ON assigned_offer.offer_id = offer.id
                     LEFT JOIN partners_groupoffer group_offer ON assigned_offer.group_id = group_offer.id
                     LEFT JOIN partners_subsystem AS subsystem ON subsystem.id = pt.subsystem_id
                     WHERE DATE_ADD(lv.created_at, INTERVAL 3 HOUR) BETWEEN %s AND %s
-                      AND (group_offer.name NOT IN ('Архив', 'Входящая линия') OR group_offer.name IS NULL)
+                    AND offer.id IS NOT NULL
+                    AND group_offer.name NOT IN ('Архив', 'Входящая линия')
                 """
                 params = [filters['date_from'], filters['date_to']]
+
                 if filters.get('category'):
                     sql += " AND group_offer.name = %s"
                     params.append(filters['category'])
@@ -408,7 +427,6 @@ class KPIAnalyticsViewSet(viewsets.ViewSet):
                 if filters.get('advertiser'):
                     sql += " AND LOWER(subsystem.name) = %s"
                     params.append(filters['advertiser'])
-                sql += " GROUP BY category_name, offer_id, aff_id"
 
                 cursor.execute(sql, params)
                 columns = [col[0] for col in cursor.description]
@@ -660,13 +678,22 @@ class KPIAdvancedAnalysisViewSet(viewsets.ViewSet):
         logger.info(f"Дата анализа для KPI поиска: {analysis_date}")
 
         kpi_plans_data = DBService.get_kpi_plans_data(date_from, date_to)
-
         kpi_list = OptimizedKPIList(kpi_plans_data)
 
         analytics = KPIAnalyticsViewSet()
         calls_data = analytics.get_calls_data_with_filters(params)
         leads_data = analytics.get_leads_data_with_filters(params)
         container_data = analytics.get_leads_container_data_with_filters(params)
+
+        logger.info(
+            f"Получено данных: calls={len(calls_data)}, leads={len(leads_data)}, container={len(container_data)}")
+
+        if calls_data:
+            logger.info(f"Пример данных calls: {list(calls_data[0].keys())}")
+        if leads_data:
+            logger.info(f"Пример данных leads: {list(leads_data[0].keys())}")
+        if container_data:
+            logger.info(f"Пример данных container: {list(container_data[0].keys())}")
 
         class KPIStat:
             def __init__(self, kpi_list, analysis_date):
@@ -677,34 +704,20 @@ class KPIAdvancedAnalysisViewSet(viewsets.ViewSet):
             def push_lead(self, sql_data):
                 cat_name = sql_data.get('category_name', 'Без категории')
                 if cat_name not in self.category:
-                    self.category[cat_name] = CategoryItem(cat_name, cat_name, self.analysis_date)
-                self.category[cat_name].push_lead({
-                    'offer_id': sql_data.get('offer_id', 0),
-                    'offer_name': sql_data.get('offer_name', 'Без оффера'),
-                    'aff_id': sql_data.get('aff_id', 0),
-                    'operator_name': sql_data.get('operator_name', 'Без оператора')
-                }, sql_data)
+                    self.category[cat_name] = CategoryItem(cat_name, cat_name)
+                self.category[cat_name].push_lead(sql_data)
 
             def push_call(self, sql_data):
                 cat_name = sql_data.get('category_name', 'Без категории')
                 if cat_name not in self.category:
-                    self.category[cat_name] = CategoryItem(cat_name, cat_name, self.analysis_date)
-                self.category[cat_name].push_call({
-                    'offer_id': sql_data.get('offer_id', 0),
-                    'offer_name': sql_data.get('offer_name', 'Без оффера'),
-                    'aff_id': sql_data.get('aff_id', 0),
-                    'operator_name': sql_data.get('operator_name', 'Без оператора')
-                }, sql_data)
+                    self.category[cat_name] = CategoryItem(cat_name, cat_name)
+                self.category[cat_name].push_call(sql_data)
 
             def push_lead_container(self, sql_data):
                 cat_name = sql_data.get('category_name', 'Без категории')
                 if cat_name not in self.category:
-                    self.category[cat_name] = CategoryItem(cat_name, cat_name, self.analysis_date)
-                self.category[cat_name].push_lead_container({
-                    'offer_id': sql_data.get('offer_id', 0),
-                    'offer_name': sql_data.get('offer_name', 'Без оффера'),
-                    'aff_id': sql_data.get('aff_id', 0)
-                }, sql_data)
+                    self.category[cat_name] = CategoryItem(cat_name, cat_name)
+                self.category[cat_name].push_lead_container(sql_data)
 
             def finalyze(self):
                 for cat in self.category.values():
@@ -713,10 +726,57 @@ class KPIAdvancedAnalysisViewSet(viewsets.ViewSet):
                     except Exception as e:
                         logger.error(f"Ошибка при финализации категории {cat.key}: {str(e)}")
 
-        stat = KPIStat(kpi_list, analysis_date)
-        for c in calls_data: stat.push_call(c)
-        for l in leads_data: stat.push_lead(l)
-        for lc in container_data: stat.push_lead_container(lc)
+        global_lead_container = GlobalLeadContainerStat()
+        for lc in container_data:
+            global_lead_container.push_lead(lc)
+        for call in calls_data:
+            global_lead_container.push_call(call)
+        global_lead_container.finalyze()
+        aggregator = GlobalDataAggregator(global_lead_container)
+        aggregator.aggregate_by_category_and_offer(calls_data, leads_data)
+        category_stats = aggregator.get_category_stats()
+
+        class KPIStat:
+            def __init__(self, kpi_list, analysis_date, category_stats):
+                self.category = category_stats
+                self.kpi_list = kpi_list
+                self.analysis_date = analysis_date
+
+            def finalyze(self):
+                for cat in self.category.values():
+                    cat.finalyze(self.kpi_list)
+
+        stat = KPIStat(kpi_list, analysis_date, category_stats)
+        stat.finalyze()
+
+        for c in calls_data:
+            stat.push_call(c)
+        for l in leads_data:
+            stat.push_lead(l)
+        for lc in container_data:
+            container_formatted = {
+                'offer_id': lc.get('offer_id', 0),
+                'offer_name': lc.get('offer_name', 'Без оффера'),
+                'category_name': lc.get('category_name', 'Без категории'),
+                'aff_id': lc.get('aff_id', 0),
+                'lead_container_crm_lead_id': lc.get('lead_container_crm_lead_id'),
+                'lead_container_created_at': lc.get('lead_container_created_at'),
+                'lead_container_approved_at': lc.get('lead_container_approved_at'),
+                'lead_container_canceled_at': lc.get('lead_container_canceled_at'),
+                'lead_container_buyout_at': lc.get('lead_container_buyout_at'),
+                'lead_container_status_verbose': lc.get('lead_container_status_verbose'),
+                'lead_container_status_group': lc.get('lead_container_status_group'),
+                'lead_container_is_trash': lc.get('lead_container_is_trash', 0),
+                'lead_container_lead_ttl_till': lc.get('lead_container_lead_ttl_till'),
+                'lead_container_now': lc.get('lead_container_now')
+            }
+            stat.push_lead_container(container_formatted)
+        if calls_data:
+            logger.info(f"Пример данных calls: {calls_data[0]}")
+        if leads_data:
+            logger.info(f"Пример данных leads: {leads_data[0]}")
+        if container_data:
+            logger.info(f"Пример данных container: {container_data[0]}")
         logger.info(f"Статистика создана, категорий: {len(stat.category)}")
         stat.finalyze()
         return stat
@@ -737,9 +797,9 @@ class KPIAdvancedAnalysisViewSet(viewsets.ViewSet):
                     'expecting_effective_rate': category.kpi_stat.expecting_effective_rate,
                 },
                 'lead_container': {
-                    'leads_non_trash_count': category.lead_container.leads_non_trash_count,
-                    'leads_approved_count': category.lead_container.leads_approved_count,
-                    'leads_buyout_count': category.lead_container.leads_buyout_count,
+                    'leads_non_trash_count': category.leads_non_trash_count,
+                    'leads_approved_count': category.leads_approved_count,
+                    'leads_buyout_count': category.leads_buyout_count,
                 },
                 'recommendations': {
                     'efficiency': {
@@ -939,6 +999,107 @@ class KPIAdvancedAnalysisViewSet(viewsets.ViewSet):
         else:
             return 'string'
 
+    @action(detail=False, methods=['get'])
+    def debug_zero_offers(self, request):
+        date_from = request.query_params.get('date_from')
+        date_to = request.query_params.get('date_to')
+
+        if not date_from or not date_to:
+            return Response({'error': 'date_from и date_to обязательны'}, status=400)
+
+        try:
+            connection = connections['itrade']
+            with connection.cursor() as cursor:
+                sql = """
+                    SELECT 
+                        crm_leads_crmlead.id as lead_id,
+                        LEFT(DATE_ADD(lv.created_at, INTERVAL 3 HOUR), 19) as created_at,
+                        LEFT(DATE_ADD(lv.approved_at, INTERVAL 3 HOUR), 19) as approved_at,
+                        LEFT(DATE_ADD(lv.canceled_at, INTERVAL 3 HOUR), 19) as canceled_at,
+                        LEFT(DATE_ADD(lv.buyout_at, INTERVAL 3 HOUR), 19) as buyout_at,
+                        lv_status.status_verbose,
+                        lv_status.status_group,
+                        pt.is_trash,
+                        offer.id as offer_id,
+                        offer.name as offer_name,
+                        group_offer.name as category_name,
+                        pt.webmaster_id as aff_id
+                    FROM partners_lvlead lv
+                    LEFT JOIN crm_leads_crmlead ON crm_leads_crmlead.lvlead_id = lv.id
+                    LEFT JOIN partners_tllead pt ON lv.tl_id = pt.external_id
+                    LEFT JOIN partners_lvleadstatuses AS lv_status ON lv.leadvertex_status_id = lv_status.id
+                    LEFT JOIN partners_offer as offer ON pt.offer_id = offer.id
+                    LEFT JOIN partners_assignedoffer assigned_offer ON assigned_offer.offer_id = offer.id
+                    LEFT JOIN partners_groupoffer group_offer ON assigned_offer.group_id = group_offer.id
+                    WHERE DATE_ADD(lv.created_at, INTERVAL 3 HOUR) BETWEEN %s AND %s
+                    AND (offer.id IS NULL OR offer.id = 0)
+                    LIMIT 100
+                """
+                cursor.execute(sql, [date_from, date_to])
+                columns = [col[0] for col in cursor.description]
+                results = [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+            return Response({
+                'zero_offer_leads': results,
+                'count': len(results),
+                'period': f"{date_from} - {date_to}"
+            })
+
+        except Exception as e:
+            logger.error(f"Ошибка при получении лидов с offer_id=0: {str(e)}")
+            return Response({'error': str(e)}, status=500)
+
+    @action(detail=False, methods=['get'])
+    def debug_category_leads(self, request):
+        date_from = request.query_params.get('date_from')
+        date_to = request.query_params.get('date_to')
+        category = request.query_params.get('category', 'Без категории')
+
+        if not date_from or not date_to:
+            return Response({'error': 'date_from и date_to обязательны'}, status=400)
+
+        try:
+            connection = connections['itrade']
+            with connection.cursor() as cursor:
+                sql = """
+                    SELECT 
+                        crm_leads_crmlead.id as lead_id,
+                        LEFT(DATE_ADD(lv.created_at, INTERVAL 3 HOUR), 19) as created_at,
+                        LEFT(DATE_ADD(lv.approved_at, INTERVAL 3 HOUR), 19) as approved_at,
+                        LEFT(DATE_ADD(lv.canceled_at, INTERVAL 3 HOUR), 19) as canceled_at,
+                        LEFT(DATE_ADD(lv.buyout_at, INTERVAL 3 HOUR), 19) as buyout_at,
+                        lv_status.status_verbose,
+                        lv_status.status_group,
+                        pt.is_trash,
+                        offer.id as offer_id,
+                        offer.name as offer_name,
+                        group_offer.name as category_name,
+                        pt.webmaster_id as aff_id
+                    FROM partners_lvlead lv
+                    LEFT JOIN crm_leads_crmlead ON crm_leads_crmlead.lvlead_id = lv.id
+                    LEFT JOIN partners_tllead pt ON lv.tl_id = pt.external_id
+                    LEFT JOIN partners_lvleadstatuses AS lv_status ON lv.leadvertex_status_id = lv_status.id
+                    LEFT JOIN partners_offer as offer ON pt.offer_id = offer.id
+                    LEFT JOIN partners_assignedoffer assigned_offer ON assigned_offer.offer_id = offer.id
+                    LEFT JOIN partners_groupoffer group_offer ON assigned_offer.group_id = group_offer.id
+                    WHERE DATE_ADD(lv.created_at, INTERVAL 3 HOUR) BETWEEN %s AND %s
+                    AND group_offer.name = %s
+                    LIMIT 50
+                """
+                cursor.execute(sql, [date_from, date_to, category])
+                columns = [col[0] for col in cursor.description]
+                results = [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+            return Response({
+                'category_leads': results,
+                'count': len(results),
+                'category': category,
+                'period': f"{date_from} - {date_to}"
+            })
+
+        except Exception as e:
+            logger.error(f"Ошибка при получении лидов категории {category}: {str(e)}")
+            return Response({'error': str(e)}, status=500)
 
 class KpiDataViewSet(viewsets.ModelViewSet):
     queryset = KpiData.objects.all()

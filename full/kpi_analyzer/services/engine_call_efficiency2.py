@@ -80,8 +80,8 @@ class EngineCallEfficiency2:
             self.is_salary_not_pay_reason = reason
 
         def finalyze(self):
-            from engine_leads_processing import engine_leads_processing
-            self.is_salary_not_pay_reason = engine_leads_processing.is_fake_approve({
+            from .engine_leads_proccesing import EngineLeadsProcessing
+            self.is_salary_not_pay_reason = EngineLeadsProcessing.is_fake_approve({
                 'status_verbose': self.status_verbose,
                 'status_group': self.status_group,
                 'approved_at': self.approved_at,

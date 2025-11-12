@@ -1,0 +1,439 @@
+
+engine_lead_container = {}
+
+engine_lead_container.lead = function(sql) {
+
+  this.crm_id = sql.getInt('lead_container_crm_lead_id');
+  this.created_at = sql.getString('lead_container_created_at');
+  this.approved_at = sql.getString('lead_container_approved_at');
+  this.canceled_at = sql.getString('lead_container_canceled_at');
+  this.buyout_at = sql.getString('lead_container_buyout_at');
+  this.status_verbose = sql.getString('lead_container_status_verbose').toLowerCase();
+  this.status_group = sql.getString('lead_container_status_group').toLowerCase();
+  this.is_trash = sql.getInt('lead_container_is_trash');
+  /** текущее время по базе */
+  this.now_dt = parse_date_time(sql.getString('lead_container_now'));
+  /** до какой даты рассчитывать время жизни лида (например только первые 24 часа - время создания + 24 \ или до текущего момента) */
+  this.lead_ttl_till_dt = parse_date_time(sql.getString('lead_container_lead_ttl_till'));
+
+  this.created_at_dt = parse_date_time(this.created_at)
+  this.approved_at_dt = parse_date_time(this.approved_at)
+  this.canceled_at_dt = parse_date_time(this.canceled_at)
+
+  this.is_fake_approve = false;
+  this.is_fake_approve_reason = '';
+  this.is_approve = false;
+  this.is_fake_buyout = false;
+  this.is_buyout = false;
+
+  this.dense_calls_count = 0;
+  this.dense_calls_expected_count = 0.0;
+
+  this.first_reaction_min = null;
+  /** необработанный лид */
+  this.unprocessed = null;
+
+  this.calls = [];
+
+  this.check_dense_till_dt = this.lead_ttl_till_dt;
+  if (this.approved_at_dt != null && this.check_dense_till_dt > this.approved_at_dt)
+    this.check_dense_till_dt = this.approved_at_dt;
+  else if (this.canceled_at_dt != null && this.check_dense_till_dt > this.canceled_at_dt)
+    this.check_dense_till_dt = this.canceled_at_dt;
+
+  if (this.now_dt < this.check_dense_till_dt)
+    this.check_dense_till_dt = this.now_dt;
+
+  if (this.crm_id == '' || this.crm_id == null)
+    throw "Unexpected Lead CRM ID: " + this.crm_id;
+
+  this.push_call = function(c) {
+    //if (c.calldate_dt > )
+    this.calls.push(c);
+  }
+
+  this.finalyze = function() {
+
+    if (this.approved_at != '' && this.approved_at != null) {
+      this.is_fake_approve_reason = engine_leads_processing.is_fake_approve(this);
+      if (this.is_fake_approve_reason.length)
+        this.is_fake_approve = true;
+      else {
+        this.is_approve = true;
+        this.is_trash = 0;
+      }
+    }
+
+    if (this.buyout_at != '' && this.buyout_at != null) {
+      this.is_buyout = true;
+    }
+
+    this.first_reaction_min = (this.check_dense_till_dt - this.created_at_dt) / MINUTE_MLSEC;
+    this.dense_calls_expected_count = ((this.check_dense_till_dt - this.created_at_dt) / MINUTE_MLSEC) / (288);
+
+    if (this.dense_calls_expected_count < 1)
+      this.dense_calls_expected_count = 1;
+
+    var prev_call = null;
+    for (var i in this.calls) {
+      var c = this.calls[i];
+
+      if (prev_call != null && prev_call.unique_id == c.unique_id)
+        continue;
+
+      if (prev_call == null) {
+        this.first_reaction_min = Math.min((c.calldate_dt - this.created_at_dt) / MINUTE_MLSEC, this.first_reaction_min);
+      }
+
+
+      if (
+          prev_call == null
+          || (c.calldate_dt - prev_call.calldate_dt) / MINUTE_MLSEC >= (60 * 2)
+          ) {
+
+        this.dense_calls_count++
+        prev_call = c;
+      }
+
+
+      if ((c.calldate_dt - this.created_at_dt) / MINUTE_MLSEC < (60 * 1)) {
+/*
+        if (
+            prev_call == null
+            || (c.calldate_dt - prev_call.calldate_dt) / MINUTE_MLSEC >= (30)
+            ) {
+
+          this.dense_calls_count++
+          prev_call = c;
+        }
+*/
+      } else {
+
+      }
+
+    }
+
+    /** мы не должны замещать "перезвоны одного лида", недозвонами другого лида */
+    if (this.dense_calls_count > this.dense_calls_expected_count)
+      this.dense_calls_count = this.dense_calls_expected_count;
+
+    if (this.dense_calls_count) {
+      this.unprocessed = false;
+    } else {
+      if (this.approved_at_dt <= this.check_dense_till_dt && this.approved_at_dt != null)
+        this.unprocessed = false
+      else if (this.canceled_at_dt <= this.check_dense_till_dt && this.canceled_at_dt != null)
+        this.unprocessed = false;
+      else
+        this.unprocessed = true;
+    }
+   /*
+    Logger.log("ID: " + this.crm_id + " " + this.unprocessed)
+    Logger.log("calls count: " + this.dense_calls_count);
+    Logger.log("till: " + this.check_dense_till_dt + " app: " + this.approved_at_dt + " canc: " + this.canceled_at_dt)
+   */
+  }
+}
+
+engine_lead_container.call = function(sql) {
+
+  this.id = sql.getInt('lead_container_call_id');
+  this.unique_id = sql.getString('lead_container_call_uniqueid');
+  this.crm_lead_id = sql.getInt('lead_container_crm_lead_id');
+  this.calldate_dt_str = sql.getString('lead_container_calldate_dt')
+  this.calldate_dt = parse_date_time(this.calldate_dt_str);
+}
+
+
+engine_lead_container.stat = function() {
+
+  this.leads = {};
+  this.leads_count = 0;
+  this.leads_non_trash_count = 0;
+  this.leads_fake_approved_count = 0;
+  this.leads_approved_count = 0;
+  this.leads_fake_buyout_count = 0;
+  this.leads_buyout_count = 0;
+
+  this.dense_calls_count = 0;
+  this.dense_calls_expected_count = 0.0;
+  this.dense_calls_achive_percent = 0.0;
+
+  this.first_reaction_min = 0.0;
+
+  this.unprocessed_count = 0;
+
+  this.finalyzed = false;
+
+  this.push_lead = function(sql) {
+    var l = new engine_lead_container.lead(sql);
+    if (l.crm_id in this.leads)
+      throw "Duplicate lead id: " + l.crm_id
+
+    this.leads[l.crm_id] = l;
+  }
+
+  this.last_calldate_dt_str = null;
+
+  this.push_call = function(sql) {
+    var c = new engine_lead_container.call(sql);
+    if (this.last_calldate_dt_str != null && c.calldate_dt_str < this.last_calldate_dt_str)
+      throw "Wrong sort order calls, prev dt: " + this.last_calldate_dt_str + " < new dt:" + c.calldate_dt_str;
+    this.last_calldate_dt_str = c.calldate_dt_str;
+
+    if (c.crm_lead_id in this.leads)
+      this.leads[c.crm_lead_id].push_call(c);
+
+  }
+
+  this.finalyze = function() {
+    if (this.finalyzed)
+      throw "Already finalyzed";
+
+    this.finalyzed = true;
+    this.leads_count = Object.keys(this.leads).length;
+
+    for (var k in this.leads) {
+      var l = this.leads[k]
+      l.finalyze();
+
+      if (l.is_trash == 0)
+        this.leads_non_trash_count++;
+
+      if (l.is_fake_approve)
+        this.leads_fake_approved_count++;
+      if (l.is_approve)
+        this.leads_approved_count++;
+
+      if (l.is_fake_buyout)
+        this.leads_fake_buyout_count++;
+      if (l.is_buyout)
+        this.leads_buyout_count++;
+
+      this.dense_calls_count += l.dense_calls_count
+      this.dense_calls_expected_count += l.dense_calls_expected_count
+      this.dense_calls_achive_percent = safe_div(this.dense_calls_count, this.dense_calls_expected_count) * 100;
+      this.first_reaction_min += l.first_reaction_min;
+      if (l.unprocessed)
+        this.unprocessed_count++;
+    }
+
+    this.first_reaction_min = safe_div(this.first_reaction_min, this.leads_count)
+  }
+}
+
+
+function engine_lead_container_get_query_leads() {
+  var q = "SELECT\n"+
+    "crm_leads_crmlead.id lead_container_crm_lead_id,\n"+
+    "LEFT(DATEADD(HOUR, 3, lv.created_at), 19) lead_container_created_at,\n"+
+    "LEFT(DATEADD(HOUR, 3, lv.approved_at), 19) lead_container_approved_at,\n"+
+    "LEFT(DATEADD(HOUR, 3, lv.canceled_at), 19) lead_container_canceled_at,\n"+
+    "LEFT(DATEADD(HOUR, 3, lv.buyout_at), 19) lead_container_buyout_at,\n"+
+    "lv_status.status_verbose as lead_container_status_verbose,\n"+
+    "pt.is_trash as lead_container_is_trash,\n" +
+    "LEFT(DATEADD(HOUR, 3+24, lv.created_at), 19) lead_container_lead_ttl_till,\n"+
+    "LEFT(DATEADD(HOUR, 3, GETDATE()), 19) as lead_container_now\n" +
+    "FROM partners_lvlead lv\n"+
+    "LEFT JOIN crm_leads_crmlead ON crm_leads_crmlead.lvlead_id = lv.id\n"+
+    "LEFT JOIN partners_tllead pt ON lv.tl_id = pt.external_id\n"+
+    "LEFT JOIN partners_lvleadstatuses AS lv_status ON lv.leadvertex_status_id = lv_status.id\n"+
+    "WHERE 1=1\n"+
+    "AND DATEADD(HOUR, 3, lv.created_at) >= '2023-09-01 00:00:00'\n" +
+    "AND DATEADD(HOUR, 3, lv.created_at) < '2023-09-02 00:00:00'\n" +
+    // "AND crm_leads_crmlead.id = 55895885\n" +
+    "";
+
+    return q;
+}
+
+function engine_lead_container_get_query_calls() {
+  var q =
+    "SELECT\n"+
+    "partners_atscallevent.id as lead_container_call_id,\n"+
+    "partners_atscallevent.uniqueid as lead_container_call_uniqueid,\n"+
+    "crm_call_calldata.crm_lead_id as lead_container_crm_lead_id,\n"+
+    "LEFT(DATEADD(HOUR, 3, partners_atscallevent.calldate), 19) AS lead_container_calldate_dt\n"+
+    "FROM partners_atscallevent\n"+
+    "LEFT JOIN crm_call_calldata ON crm_call_calldata.id = partners_atscallevent.assigned_call_data_id\n"+
+    "LEFT JOIN partners_lvlead ON partners_atscallevent.lvlead_id = partners_lvlead.id\n"+
+    "LEFT JOIN crm_leads_crmlead ON crm_leads_crmlead.lvlead_id = partners_lvlead.id\n"+
+    "LEFT JOIN partners_lvoperator lv_op ON lv_op.id = partners_atscallevent.lvoperator_id\n"+
+    "LEFT JOIN partners_userbasedonlvoperator pu ON pu.operator_id = partners_atscallevent.lvoperator_id\n"+
+    "LEFT JOIN users_user uu ON uu.id = pu.user_id\n"+
+    "LEFT JOIN users_department ud ON ud.id = uu.department_id\n"+
+    "LEFT JOIN partners_tllead pt ON partners_lvlead.tl_id = pt.external_id \n " +
+    "LEFT JOIN partners_offer po ON pt.offer_id = po.id \n " +
+    "LEFT JOIN partners_assignedoffer t2 ON t2.offer_id = po.id \n"+
+    "LEFT JOIN partners_groupoffer t3 ON t2.group_id = t3.id \n"+
+    "LEFT JOIN partners_subsystem AS ps ON ps.id = pt.subsystem_id\n"+
+    "WHERE 1=1\n"+
+    "AND partners_atscallevent.billsec >= 1\n"+
+    "AND partners_lvlead.tl_id IS NOT NULL\n"+
+    "AND ((ud.name LIKE N'%_НП_%'))\n"+
+    "AND DATEADD(HOUR, 3, partners_atscallevent.calldate) >= '2023-09-01 00:00:00'\n"+
+    "AND DATEADD(HOUR, 3, partners_atscallevent.calldate) < '2023-09-03 00:00:00'\n"+
+    "ORDER BY partners_atscallevent.calldate;"
+
+    return q;
+}
+
+function engine_lead_container_test() {
+
+  var stat = new engine_call_effeciency2.stat();
+  var conn = conn_to_db()
+  var stmt = conn.createStatement()
+
+  var stat = new engine_lead_container.stat()
+
+  var q = engine_lead_container_get_query_leads();
+  Logger.log("Q: " + q);
+  var r = stmt.executeQuery(q)
+
+  while (r.next())
+    stat.push_lead(r);
+
+  var q = engine_lead_container_get_query_calls();
+  Logger.log("Q: " + q);
+  var r = stmt.executeQuery(q);
+  while (r.next())
+    stat.push_call(r);
+
+  stat.finalyze()
+  Logger.log("Leads count: " + stat.leads_count);
+  Logger.log("Leads non trash count: " + stat.leads_non_trash_count);
+  Logger.log("Leads approved: " + stat.leads_approved_count);
+  Logger.log("Leads fake approved: " + stat.leads_fake_approved_count)
+  Logger.log("Leads buyout: " + stat.leads_buyout_count)
+  Logger.log("Leads fake buyout: " + stat.leads_fake_buyout_count)
+  Logger.log("Dense calls count: " + stat.dense_calls_count);
+  Logger.log("Dense calls expected count: " + stat.dense_calls_expected_count);
+  Logger.log("Dense calls achive %: " + print_float(stat.dense_calls_achive_percent) + "%");
+  Logger.log("First reaction: " + print_float(stat.first_reaction_min));
+  Logger.log("Unprocessed count: " + stat.unprocessed_count);
+}
+
+engine_lead_container.lead_test_mokup = function(lead_container_crm_lead_id,
+  lead_container_created_at,
+  lead_container_approved_at,
+  lead_container_canceled_at,
+  lead_container_buyout_at,
+  lead_container_status_verbose,
+  lead_container_status_group,
+  lead_container_is_trash,
+  lead_container_now,
+  lead_container_lead_ttl_till
+  ) {
+
+  this.lead_container_crm_lead_id = lead_container_crm_lead_id;
+  this.lead_container_created_at = lead_container_created_at;
+  this.lead_container_approved_at = lead_container_approved_at;
+  this.lead_container_canceled_at = lead_container_canceled_at;
+  this.lead_container_buyout_at = lead_container_buyout_at;
+  this.lead_container_status_verbose = lead_container_status_verbose;
+  this.lead_container_status_group = lead_container_status_group;
+  this.lead_container_is_trash = lead_container_is_trash;
+  this.lead_container_now = lead_container_now;
+  this.lead_container_lead_ttl_till = lead_container_lead_ttl_till
+
+  this.getInt = function(key) {
+    if (!(key in this))
+      throw "Can't find field '" + key + "'"
+    return this[key];
+  }
+
+  this.getString = function(key) {
+    if (!(key in this))
+      throw "Can't find field '" + key + "'"
+
+    return this[key];
+  }
+
+}
+
+engine_lead_container.call_test_mokup = function(
+  lead_container_call_id,
+  lead_container_call_uniqueid,
+  lead_container_crm_lead_id,
+  lead_container_calldate_dt
+
+) {
+
+  this.lead_container_call_id = lead_container_call_id;
+  this.lead_container_call_uniqueid = lead_container_call_uniqueid;
+  this.lead_container_crm_lead_id = lead_container_crm_lead_id;
+  this.lead_container_calldate_dt = lead_container_calldate_dt;
+
+
+  this.getInt = function(key) {
+    if (!(key in this))
+      throw "Can't find field '" + key + "'"
+    return this[key];
+  }
+
+  this.getString = function(key) {
+    if (!(key in this))
+      throw "Can't find field '" + key + "'"
+
+    return this[key];
+  }
+
+}
+
+function engine_lead_container_test_nodb() {
+
+  var stat = new engine_lead_container.stat()
+
+  var leads = [];
+    var calls = [];
+  {
+    leads.push(
+      new engine_lead_container.lead_test_mokup(
+        1, // lead id
+        "2024-01-01 00:00:00", // cr at
+        "2024-01-02 00:00:00",// app at
+        null, //cancel at
+        "2024-01-15 00:00:00", // buyout at
+        "paid",
+        "paid",
+        0, // is trash
+        "2024-01-15 00:00:00", // now
+        "2024-01-15 00:00:00" // ttl
+      )
+    );
+
+    calls.push(
+      new engine_lead_container.call_test_mokup(
+          1, // callid
+          "00", // unique id
+          1, // lead id
+          "2024-01-01 00:00:00" // calldate
+
+      )
+    )
+  }
+
+
+
+  for (var i in leads)
+    stat.push_lead(leads[i]);
+
+  for (var i in calls)
+    stat.push_call(calls[i]);
+
+  stat.finalyze();
+
+
+  Logger.log("Leads count: " + stat.leads_count);
+  Logger.log("Leads non trash count: " + stat.leads_non_trash_count);
+  Logger.log("Leads approved: " + stat.leads_approved_count);
+  Logger.log("Leads fake approved: " + stat.leads_fake_approved_count)
+  Logger.log("Leads buyout: " + stat.leads_buyout_count)
+  Logger.log("Leads fake buyout: " + stat.leads_fake_buyout_count)
+  Logger.log("Dense calls count: " + stat.dense_calls_count);
+  Logger.log("Dense calls expected count: " + stat.dense_calls_expected_count);
+  Logger.log("Dense calls achive %: " + print_float(stat.dense_calls_achive_percent) + "%");
+  Logger.log("First reaction: " + print_float(stat.first_reaction_min));
+  Logger.log("Unprocessed count: " + stat.unprocessed_count);
+
+}

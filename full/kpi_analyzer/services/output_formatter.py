@@ -1,6 +1,8 @@
-
 from .compatibility import GoogleScriptCompatibility
 from .statistics import safe_div
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class KPIOutputFormatter:
@@ -97,18 +99,24 @@ class KPIOutputFormatter:
         kpi_stat = category.get('kpi_stat', {})
         lead_container = category.get('lead_container', {})
 
-        has_calls = kpi_stat.get('calls_group_effective_count', 0) > 0
-        has_leads = lead_container.get('leads_non_trash_count', 0) > 0
+        # 🔥 ВРЕМЕННО ВКЛЮЧАЕМ ВСЕ КАТЕГОРИИ ДАЖЕ С НУЛЕВЫМИ ДАННЫМИ
+        has_calls = kpi_stat.get('calls_group_effective_count', 0) >= 0  # Всегда True
+        has_leads = lead_container.get('leads_non_trash_count', 0) >= 0  # Всегда True
 
+        logger.debug(
+            f"Фильтр категории {category.get('key')}: calls={kpi_stat.get('calls_group_effective_count', 0)}, leads={lead_container.get('leads_non_trash_count', 0)}")
         return has_calls or has_leads
 
     def _should_include_offer(self, offer, category):
         kpi_stat = offer.get('kpi_stat', {})
         lead_container = category.get('lead_container', {})
 
-        has_calls = kpi_stat.get('calls_group_effective_count', 0) >= 5
-        has_leads = lead_container.get('leads_non_trash_count', 0) >= 5
+        # 🔥 ВРЕМЕННО ВКЛЮЧАЕМ ВСЕ ОФФЕРЫ
+        has_calls = kpi_stat.get('calls_group_effective_count', 0) >= 0  # Всегда True
+        has_leads = lead_container.get('leads_non_trash_count', 0) >= 0  # Всегда True
 
+        logger.debug(
+            f"Фильтр оффера {offer.get('key')}: calls={kpi_stat.get('calls_group_effective_count', 0)}, leads={lead_container.get('leads_non_trash_count', 0)}")
         return has_calls or has_leads
 
     def print_pd_category(self, pd, category):
