@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import axios from 'axios'
 import { AgGridReact } from 'ag-grid-react'
 import 'ag-grid-community/styles/ag-grid.css'
@@ -8,7 +8,8 @@ import './AnalyticsPage.css'
 const AnalyticsPage = () => {
   const [advancedData, setAdvancedData] = useState([])
   const [recommendations, setRecommendations] = useState([])
-  const [summary, setSummary] = useState({})
+  const [globalStats, setGlobalStats] = useState({})
+  const [categories, setCategories] = useState([])
   const [filters, setFilters] = useState({
     date_from: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     date_to: new Date().toISOString().split('T')[0],
@@ -22,545 +23,164 @@ const AnalyticsPage = () => {
   })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [gridApi, setGridApi] = useState(null)
-  const debugFirstRow = () => {
-    if (advancedData.length > 1) {
-      const firstDataRow = advancedData[1] // Первая строка с данными (после заголовков)
-      console.log('=== ДЕБАГ ПЕРВОЙ СТРОКИ ДАННЫХ ===')
-      console.log('Полная строка:', firstDataRow)
-      console.log('Тип данных по колонкам:')
-      firstDataRow.forEach((value, index) => {
-        console.log(`Колонка ${index}:`, value, 'тип:', typeof value)
-      })
+  const gridRef = useRef()
 
-      // Проверяем числовые колонки
-      const numericColumns = [6, 7, 8, 10, 11, 14, 18, 19, 20, 21, 22, 27, 28, 29, 30, 34, 36, 38, 40]
-      console.log('Числовые значения:')
-      numericColumns.forEach(col => {
-        const value = firstDataRow[col]
-        const numValue = parseFloat(value)
-        console.log(`Колонка ${col}:`, value, 'число?:', !isNaN(numValue), 'преобразованное:', numValue)
-      })
-
-      // Проверяем обработанные данные
-      const processedData = getRowData()
-      if (processedData.length > 0) {
-        console.log('=== ОБРАБОТАННЫЕ ДАННЫХ ===')
-        console.log('Первая обработанная строка:', processedData[0])
-        console.log('Колонка 6 (звонки):', processedData[0][6], 'тип:', typeof processedData[0][6])
-        console.log('Колонка 7 (лиды):', processedData[0][7], 'тип:', typeof processedData[0][7])
-      }
-    } else {
-      console.log('Нет данных для дебага')
+  // === ЗАГРУЗКА КАТЕГОРИЙ ===
+  const loadCategories = async () => {
+    try {
+      const res = await axios.get('/api/legacy/filter-params/')
+      const cats = res.data.available_filters?.categories || []
+      setCategories(cats)
+    } catch (err) {
+      console.error('Ошибка загрузки категорий:', err)
     }
   }
+
+  // === АНАЛИЗ ===
   const loadAdvancedAnalysis = async () => {
     setLoading(true)
     setError('')
     try {
-      const res = await axios.post('/api/kpi-advanced/advanced_analysis/', {
-        params: filters
-      })
-
-      console.log('📊 Ответ от сервера advanced_analysis:', res.data)
-
+      const res = await axios.post('/api/kpi/advanced_analysis/', filters)
       if (res.data.success) {
         setAdvancedData(res.data.data || [])
         setRecommendations(res.data.recommendations || [])
-        setSummary(res.data.summary || {})
+        setGlobalStats(res.data.global_stats || {})
 
-        if (gridApi) {
+        // ГРУППИРОВКА
+        if (res.data.groups && gridRef.current?.api) {
           setTimeout(() => {
-            gridApi.sizeColumnsToFit()
+            res.data.groups.forEach(g => {
+              for (let i = g.start; i <= g.end; i++) {
+                const node = gridRef.current.api.getRowNode(i.toString())
+                if (node) node.setExpanded(true)
+              }
+            })
           }, 100)
         }
       } else {
-        setError(res.data.error || 'Ошибка при загрузке данных')
+        setError(res.data.error || 'Ошибка анализа')
       }
     } catch (err) {
-      console.error('❌ Ошибка загрузки расширенного анализа:', err)
-      setError(err.response?.data?.error || 'Ошибка соединения с сервером')
-      setAdvancedData([])
-      setRecommendations([])
-      setSummary({})
+      setError(err.response?.data?.error || 'Сервер недоступен')
+      console.error('Ошибка запроса:', err)
     } finally {
       setLoading(false)
     }
   }
 
-  const loadGoogleSheetsFormat = async () => {
-    setLoading(true)
-    setError('')
-    try {
-      const res = await axios.post('/api/kpi-advanced/google_sheets_format/', {
-        params: filters
+  // === ДАННЫЕ ДЛЯ ГРИДА ===
+  const getRowData = () => {
+    if (!advancedData.length) return []
+    const rows = []
+    let rowId = 0
+
+    advancedData.forEach(cat => {
+      // КАТЕГОРИЯ
+      rows.push({
+        id: rowId++,
+        type: 'category',
+        description: cat.description,
+        calls_effective: cat.kpi_stat?.calls_group_effective_count || 0,
+        leads_effective: cat.kpi_stat?.leads_effective_count || 0,
+        effective_percent: cat.kpi_stat?.effective_percent || 0,
+        effective_rate: cat.kpi_stat?.effective_rate || 0,
+        expecting_rate: cat.kpi_stat?.expecting_effective_rate || 0,
+        leads_non_trash: cat.lead_container?.leads_non_trash_count || 0,
+        leads_approved: cat.lead_container?.leads_approved_count || 0,
+        approve_percent_fact: cat.approve_percent_fact || 0,
+        approve_rate_plan: cat.approve_rate_plan || 0,
+        leads_buyout: cat.lead_container?.leads_buyout_count || 0,
+        buyout_percent_fact: cat.buyout_percent_fact || 0,
       })
 
-      console.log('📊 Полный ответ Google Sheets:', res.data)
-
-      if (res.data.success) {
-        const sheetsData = res.data.data || []
-        console.log('📊 Данные в формате Google Sheets:', {
-          totalRows: sheetsData.length,
-          firstRow: sheetsData[0],
-          secondRow: sheetsData[1],
-          isArray: Array.isArray(sheetsData[0])
+      // ОФФЕРЫ
+      cat.offers?.forEach(offer => {
+        rows.push({
+          id: rowId++,
+          type: 'offer',
+          description: offer.description,
+          offer_name: offer.description,
+          offer_id: offer.key,
+          calls_effective: offer.kpi_stat?.calls_group_effective_count || 0,
+          leads_effective: offer.kpi_stat?.leads_effective_count || 0,
+          effective_percent: offer.kpi_stat?.effective_percent || 0,
+          effective_rate: offer.kpi_stat?.effective_rate || 0,
+          leads_non_trash: offer.lead_container?.leads_non_trash_count || 0,
+          leads_approved: offer.lead_container?.leads_approved_count || 0,
+          approve_percent_fact: offer.approve_percent_fact || 0,
+          leads_buyout: offer.lead_container?.leads_buyout_count || 0,
+          buyout_percent_fact: offer.buyout_percent_fact || 0,
         })
-
-        setAdvancedData(sheetsData)
-        setSummary(res.data.metadata || {})
-        setRecommendations([])
-
-        if (gridApi) {
-          setTimeout(() => {
-            gridApi.sizeColumnsToFit()
-          }, 100)
-        }
-
-        alert(`Данные подготовлены в формате Google Sheets: ${sheetsData.length} строк, ${res.data.metadata?.columns_count || 42} колонок`)
-      }
-    } catch (err) {
-      console.error('❌ Ошибка формата Google Sheets:', err)
-      setError(err.response?.data?.error || 'Ошибка загрузки Google Sheets формата')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const loadComparison = async () => {
-    try {
-      const res = await axios.get('/api/kpi-advanced/comparison/', {
-        params: {
-          date_from: filters.date_from,
-          date_to: filters.date_to
-        }
       })
 
-      console.log('📊 Сравнение анализов:', res.data)
+      // ОПЕРАТОРЫ
+      cat.operators?.forEach(op => {
+        rows.push({
+          id: rowId++,
+          type: 'operator',
+          description: op.key,
+          operator_name: op.key,
+          calls_effective: op.kpi_stat?.calls_group_effective_count || 0,
+          leads_effective: op.kpi_stat?.leads_effective_count || 0,
+          effective_percent: op.kpi_stat?.effective_percent || 0,
+          effective_rate: op.kpi_stat?.effective_rate || 0,
+        })
+      })
 
-      const comparison = res.data.comparison || {}
-      alert(`Сравнение завершено!\n\n` +
-        `Разница в записях: ${comparison.records_count_diff || 0}\n` +
-        `Разница в эффективности: ${comparison.efficiency_diff?.toFixed(2) || 0}%`
-      )
-    } catch (err) {
-      console.error('❌ Ошибка сравнения:', err)
-      alert('Ошибка при сравнении анализов')
-    }
+      // АФФИЛИАТЫ
+      cat.affiliates?.forEach(aff => {
+        rows.push({
+          id: rowId++,
+          type: 'affiliate',
+          description: `Веб #${aff.key}`,
+          aff_id: aff.key,
+          calls_effective: aff.kpi_stat?.calls_group_effective_count || 0,
+          leads_effective: aff.kpi_stat?.leads_effective_count || 0,
+          effective_percent: aff.kpi_stat?.effective_percent || 0,
+          effective_rate: aff.kpi_stat?.effective_rate || 0,
+        })
+      })
+    })
+
+    return rows
   }
 
-  const onGridReady = (params) => {
-    setGridApi(params.api)
-  }
-
-  const advancedColumnDefs = [
+  // === КОЛОНКИ ===
+  const columnDefs = [
+    { headerName: "Тип", field: "type", rowGroup: filters.group_rows === 'Да', hide: true },
+    { headerName: "Описание", field: "description", pinned: 'left', width: 220 },
+    { headerName: "Звонки", field: "calls_effective", type: 'numericColumn', width: 110 },
+    { headerName: "Лиды", field: "leads_effective", type: 'numericColumn', width: 110 },
     {
-      headerName: "Тип данных",
-      field: "type",
-      width: 120,
-      cellStyle: { fontWeight: 'bold' },
-      filter: 'agTextFilter',
-      pinned: 'left'
-    },
-    {
-      headerName: "Категория",
-      field: "category_name",
-      width: 150,
-      filter: 'agTextFilter'
-    },
-    {
-      headerName: "ID Оффер",
-      field: "offer_id",
-      width: 100,
-      type: 'numericColumn',
-      filter: 'agNumberFilter'
-    },
-    {
-      headerName: "Оффер",
-      field: "offer_name",
-      width: 200,
-      filter: 'agTextFilter'
-    },
-    {
-      headerName: "ID Вебмастер",
-      field: "aff_id",
-      width: 120,
-      type: 'numericColumn',
-      filter: 'agNumberFilter'
-    },
-    {
-      headerName: "Оператор",
-      field: "operator_name",
-      width: 150,
-      filter: 'agTextFilter'
-    },
-    {
-      headerName: "Звонки (эфф)",
-      field: "calls_count",
-      width: 120,
-      type: 'numericColumn',
-      filter: 'agNumberFilter',
-      valueFormatter: params => params.value ? params.value.toLocaleString() : '0'
-    },
-    {
-      headerName: "Лиды (эфф)",
-      field: "leads_count",
-      width: 120,
-      type: 'numericColumn',
-      filter: 'agNumberFilter',
-      valueFormatter: params => params.value ? params.value.toLocaleString() : '0'
-    },
-    {
-      headerName: "% эффект.",
+      headerName: "% Эфф.",
       field: "effective_percent",
-      width: 100,
       type: 'numericColumn',
-      filter: 'agNumberFilter',
-      valueFormatter: params => params.value ? params.value.toFixed(1) + '%' : '0%',
-      cellStyle: params => ({
-        color: params.value > 20 ? '#10b981' : params.value > 10 ? '#f59e0b' : '#ef4444',
+      width: 100,
+      valueFormatter: p => p.value ? p.value.toFixed(1) + '%' : '0%',
+      cellStyle: p => ({
+        color: p.value > 20 ? '#10b981' : p.value > 10 ? '#f59e0b' : '#ef4444',
         fontWeight: 'bold'
       })
     },
-    {
-      headerName: "Эфф. факт",
-      field: "effective_rate",
-      width: 100,
-      type: 'numericColumn',
-      filter: 'agNumberFilter',
-      valueFormatter: params => params.value ? params.value.toFixed(2) : '0.00'
-    },
-    {
-      headerName: "Эфф. план",
-      field: "expecting_effective_rate",
-      width: 100,
-      type: 'numericColumn',
-      filter: 'agNumberFilter',
-      valueFormatter: params => params.value ? params.value.toFixed(2) : '-'
-    },
-    {
-      headerName: "Эфф. реком.",
-      field: "efficiency_recommendation",
-      width: 120,
-      type: 'numericColumn',
-      filter: 'agNumberFilter',
-      valueFormatter: params => params.value ? params.value.toFixed(2) : '-'
-    },
-    {
-      headerName: "Лиды без треша",
-      field: "leads_non_trash_count",
-      width: 130,
-      type: 'numericColumn',
-      filter: 'agNumberFilter',
-      valueFormatter: params => params.value ? params.value.toLocaleString() : '0'
-    },
-    {
-      headerName: "Аппрувы",
-      field: "leads_approved_count",
-      width: 100,
-      type: 'numericColumn',
-      filter: 'agNumberFilter',
-      valueFormatter: params => params.value ? params.value.toLocaleString() : '0'
-    },
-    {
-      headerName: "% аппрува факт",
-      field: "approve_percent_fact",
-      width: 120,
-      type: 'numericColumn',
-      filter: 'agNumberFilter',
-      valueFormatter: params => params.value ? params.value.toFixed(1) + '%' : '0%'
-    },
-    {
-      headerName: "% аппрува план",
-      field: "approve_rate_plan",
-      width: 120,
-      type: 'numericColumn',
-      filter: 'agNumberFilter',
-      valueFormatter: params => params.value ? params.value.toFixed(1) + '%' : '-'
-    },
-    {
-      headerName: "Аппрув реком.",
-      field: "approve_recommendation",
-      width: 120,
-      type: 'numericColumn',
-      filter: 'agNumberFilter',
-      valueFormatter: params => params.value ? params.value.toFixed(1) + '%' : '-'
-    },
-    {
-      headerName: "Выкупы",
-      field: "leads_buyout_count",
-      width: 100,
-      type: 'numericColumn',
-      filter: 'agNumberFilter',
-      valueFormatter: params => params.value ? params.value.toLocaleString() : '0'
-    },
-    {
-      headerName: "% выкупа факт",
-      field: "buyout_percent_fact",
-      width: 120,
-      type: 'numericColumn',
-      filter: 'agNumberFilter',
-      valueFormatter: params => params.value ? params.value.toFixed(1) + '%' : '0%'
-    },
-    {
-      headerName: "Выкуп реком.",
-      field: "buyout_recommendation",
-      width: 120,
-      type: 'numericColumn',
-      filter: 'agNumberFilter',
-      valueFormatter: params => params.value ? params.value.toFixed(1) + '%' : '-'
-    }
+    { headerName: "Эфф. факт", field: "effective_rate", type: 'numericColumn', width: 100, valueFormatter: p => p.value?.toFixed(2) || '0.00' },
+    { headerName: "Эфф. план", field: "expecting_rate", type: 'numericColumn', width: 100, valueFormatter: p => p.value?.toFixed(2) || '-' },
+    { headerName: "Без треша", field: "leads_non_trash", type: 'numericColumn', width: 120 },
+    { headerName: "Аппрувы", field: "leads_approved", type: 'numericColumn', width: 110 },
+    { headerName: "% Аппрув", field: "approve_percent_fact", type: 'numericColumn', width: 120, valueFormatter: p => p.value ? p.value.toFixed(1) + '%' : '0%' },
+    { headerName: "План аппрув", field: "approve_rate_plan", type: 'numericColumn', width: 120, valueFormatter: p => p.value ? p.value.toFixed(1) + '%' : '-' },
+    { headerName: "Выкупы", field: "leads_buyout", type: 'numericColumn', width: 110 },
+    { headerName: "% Выкуп", field: "buyout_percent_fact", type: 'numericColumn', width: 120, valueFormatter: p => p.value ? p.value.toFixed(1) + '%' : '0%' },
   ]
 
-  const googleSheetsColumnDefs = [
-  { headerName: "Тип данных", field: "0", width: 120, pinned: 'left', filter: 'agTextFilter' },
-  { headerName: "Категория", field: "1", width: 150, filter: 'agTextFilter' },
-  { headerName: "ID Оффер", field: "2", width: 100, filter: 'agTextFilter' },
-  { headerName: "Оффер", field: "3", width: 200, filter: 'agTextFilter' },
-  { headerName: "ID Вебмастер", field: "4", width: 120, filter: 'agTextFilter' },
-  { headerName: "Оператор", field: "5", width: 150, filter: 'agTextFilter' },
-  {
-    headerName: "Звонки (эфф)",
-    field: "6",
-    width: 120,
-    filter: 'agNumberFilter',
-    type: 'numericColumn',
-    valueFormatter: params => params.value !== undefined && params.value !== null && params.value !== '' ? params.value : '0'
-  },
-  {
-    headerName: "Лиды (эфф)",
-    field: "7",
-    width: 120,
-    filter: 'agNumberFilter',
-    type: 'numericColumn',
-    valueFormatter: params => params.value !== undefined && params.value !== null && params.value !== '' ? params.value : '0'
-  },
-  {
-    headerName: "% эффект.",
-    field: "8",
-    width: 100,
-    filter: 'agNumberFilter',
-    type: 'numericColumn',
-    valueFormatter: params => params.value !== undefined && params.value !== null && params.value !== '' ? params.value : '0%'
-  },
-  { headerName: "Пусто", field: "9", width: 80 },
-  {
-    headerName: "Эфф. факт",
-    field: "10",
-    width: 100,
-    filter: 'agNumberFilter',
-    type: 'numericColumn',
-    valueFormatter: params => params.value !== undefined && params.value !== null && params.value !== '' ? params.value : '0.00'
-  },
-  {
-    headerName: "Эфф. план",
-    field: "11",
-    width: 100,
-    filter: 'agNumberFilter',
-    type: 'numericColumn',
-    valueFormatter: params => params.value !== undefined && params.value !== null && params.value !== '' ? params.value : '-'
-  },
-  { headerName: "Дата обновления", field: "12", width: 120, filter: 'agTextFilter' },
-  { headerName: "Тип Плана", field: "13", width: 100, filter: 'agTextFilter' },
-  {
-    headerName: "Эфф. реком.",
-    field: "14",
-    width: 120,
-    filter: 'agNumberFilter',
-    type: 'numericColumn',
-    valueFormatter: params => params.value !== undefined && params.value !== null && params.value !== '' ? params.value : '-'
-  },
-  { headerName: "Дата обновления", field: "15", width: 120, filter: 'agTextFilter' },
-  { headerName: "Коррекция", field: "16", width: 120, filter: 'agTextFilter' },
-  { headerName: "Пусто", field: "17", width: 80 },
-  {
-    headerName: "Лиды без треша",
-    field: "18",
-    width: 130,
-    filter: 'agNumberFilter',
-    type: 'numericColumn',
-    valueFormatter: params => params.value !== undefined && params.value !== null && params.value !== '' ? params.value : '0'
-  },
-  {
-    headerName: "Аппрувы",
-    field: "19",
-    width: 100,
-    filter: 'agNumberFilter',
-    type: 'numericColumn',
-    valueFormatter: params => params.value !== undefined && params.value !== null && params.value !== '' ? params.value : '0'
-  },
-  {
-    headerName: "% аппрува факт",
-    field: "20",
-    width: 120,
-    filter: 'agNumberFilter',
-    type: 'numericColumn',
-    valueFormatter: params => params.value !== undefined && params.value !== null && params.value !== '' ? params.value : '0%'
-  },
-  {
-    headerName: "% аппрува план",
-    field: "21",
-    width: 120,
-    filter: 'agNumberFilter',
-    type: 'numericColumn',
-    valueFormatter: params => params.value !== undefined && params.value !== null && params.value !== '' ? params.value : '-'
-  },
-  {
-    headerName: "Аппрув реком.",
-    field: "22",
-    width: 120,
-    filter: 'agNumberFilter',
-    type: 'numericColumn',
-    valueFormatter: params => params.value !== undefined && params.value !== null && params.value !== '' ? params.value : '-'
-  },
-  { headerName: "Дата обновления", field: "23", width: 120, filter: 'agTextFilter' },
-  { headerName: "Коррекция", field: "24", width: 120, filter: 'agTextFilter' },
-  { headerName: "Пусто", field: "25", width: 80 },
-  {
-    headerName: "% выкупа",
-    field: "26",
-    width: 100,
-    filter: 'agNumberFilter',
-    type: 'numericColumn',
-    valueFormatter: params => params.value !== undefined && params.value !== null && params.value !== '' ? params.value : '0%'
-  },
-  {
-    headerName: "Выкупы",
-    field: "27",
-    width: 100,
-    filter: 'agNumberFilter',
-    type: 'numericColumn',
-    valueFormatter: params => params.value !== undefined && params.value !== null && params.value !== '' ? params.value : '0'
-  },
-  {
-    headerName: "% выкупа факт",
-    field: "28",
-    width: 120,
-    filter: 'agNumberFilter',
-    type: 'numericColumn',
-    valueFormatter: params => params.value !== undefined && params.value !== null && params.value !== '' ? params.value : '0%'
-  },
-  {
-    headerName: "% выкупа план",
-    field: "29",
-    width: 120,
-    filter: 'agNumberFilter',
-    type: 'numericColumn',
-    valueFormatter: params => params.value !== undefined && params.value !== null && params.value !== '' ? params.value : '-'
-  },
-  {
-    headerName: "Выкуп реком.",
-    field: "30",
-    width: 120,
-    filter: 'agNumberFilter',
-    type: 'numericColumn',
-    valueFormatter: params => params.value !== undefined && params.value !== null && params.value !== '' ? params.value : '-'
-  },
-  { headerName: "Дата обновления", field: "31", width: 120, filter: 'agTextFilter' },
-  { headerName: "Коррекция", field: "32", width: 120, filter: 'agTextFilter' },
-  { headerName: "[СВОД]", field: "33", width: 80, filter: 'agTextFilter' },
-  {
-    headerName: "Эфф. Рек.",
-    field: "34",
-    width: 100,
-    filter: 'agNumberFilter',
-    type: 'numericColumn',
-    valueFormatter: params => params.value !== undefined && params.value !== null && params.value !== '' ? params.value : '-'
-  },
-  { headerName: "Коррекция?", field: "35", width: 100, filter: 'agTextFilter' },
-  {
-    headerName: "Апп. Рек.",
-    field: "36",
-    width: 100,
-    filter: 'agNumberFilter',
-    type: 'numericColumn',
-    valueFormatter: params => params.value !== undefined && params.value !== null && params.value !== '' ? params.value : '-'
-  },
-  { headerName: "Коррекция?", field: "37", width: 100, filter: 'agTextFilter' },
-  {
-    headerName: "Чек Рек.",
-    field: "38",
-    width: 100,
-    filter: 'agNumberFilter',
-    type: 'numericColumn',
-    valueFormatter: params => params.value !== undefined && params.value !== null && params.value !== '' ? params.value : '-'
-  },
-  { headerName: "Коррекция?", field: "39", width: 100, filter: 'agTextFilter' },
-  {
-    headerName: "Выкуп. Рек.",
-    field: "40",
-    width: 100,
-    filter: 'agNumberFilter',
-    type: 'numericColumn',
-    valueFormatter: params => params.value !== undefined && params.value !== null && params.value !== '' ? params.value : '-'
-  },
-  { headerName: "Коррекция?", field: "41", width: 100, filter: 'agTextFilter' },
-  { headerName: "Ссылка", field: "42", width: 120, filter: 'agTextFilter' }
-]
-
-  const getColumnDefs = () => {
-    console.log('📊 Определение колонок, тип данных:', advancedData.length > 0 ? (Array.isArray(advancedData[0]) ? 'Google Sheets' : 'Обычный') : 'Пусто')
-
-    if (advancedData.length > 0 && Array.isArray(advancedData[0])) {
-      console.log('📊 Используем Google Sheets колонки')
-      return googleSheetsColumnDefs
+  const exportToCSV = () => {
+    if (gridRef.current?.api) {
+      gridRef.current.api.exportDataAsCsv({
+        fileName: `kpi_${filters.date_from}_to_${filters.date_to}`
+      })
     }
-
-    console.log('📊 Используем обычные колонки')
-    return advancedColumnDefs
   }
 
- const getRowData = () => {
-  console.log('📊 advancedData:', advancedData)
-
-  // Если данные в формате Google Sheets (двумерный массив)
-  if (advancedData.length > 0 && Array.isArray(advancedData[0])) {
-    console.log('📊 Обработка Google Sheets формата, строк:', advancedData.length)
-
-    // Берем заголовки из первой строки
-    const headers = advancedData[0]
-    // Берем данные начиная со второй строки
-    const dataRows = advancedData.slice(1)
-
-    console.log('📊 Заголовки:', headers)
-    console.log('📊 Первая строка данных:', dataRows[0])
-
-    // Преобразуем в массив объектов с правильными полями
-    return dataRows.map((row, index) => {
-      const rowObj = { id: index }
-
-      // Создаем объект где ключи - это заголовки колонок
-      headers.forEach((header, colIndex) => {
-        if (header && header.trim() !== '') {
-          // Создаем безопасное имя поля
-          const fieldName = `col_${colIndex}`
-          rowObj[fieldName] = row[colIndex]
-        }
-      })
-
-      // Также сохраняем оригинальные данные по индексам
-      row.forEach((value, colIndex) => {
-        rowObj[colIndex] = value
-      })
-
-      return rowObj
-    })
-  }
-
-  // Если данные в обычном формате
-  if (advancedData.length > 0 && typeof advancedData[0] === 'object' && !Array.isArray(advancedData[0])) {
-    return advancedData.map(item => ({
-      ...item,
-      hierarchy: item.type === 'Категория' ? [item.category_name] :
-                 item.type === 'Оффер' ? [item.category_name, item.offer_name] :
-                 item.type === 'Оператор' ? [item.category_name, item.offer_name, item.operator_name] :
-                 [item.category_name, item.offer_name, 'Веб', item.aff_id || item.key]
-    }))
-  }
-
-  console.log('📊 Нет данных для отображения')
-  return []
-}
   const resetFilters = () => {
     setFilters({
       date_from: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
@@ -575,244 +195,113 @@ const AnalyticsPage = () => {
     })
   }
 
-  const exportToCSV = () => {
-    if (gridApi) {
-      gridApi.exportDataAsCsv({
-        fileName: `kpi_analysis_${filters.date_from}_${filters.date_to}`,
-        processCellCallback: (params) => {
-          return params.value || ''
-        }
-      })
-    }
-  }
-
+  // === ЗАГРУЗКА ПРИ МОНТИРОВАНИИ ===
   useEffect(() => {
-    loadAdvancedAnalysis()
+    const init = async () => {
+      await loadCategories()
+      await loadAdvancedAnalysis()
+    }
+    init()
   }, [])
+
+  // === ПЕРЕЗАГРУЗКА ПРИ ИЗМЕНЕНИИ ФИЛЬТРОВ ===
+  useEffect(() => {
+    const timeout = setTimeout(loadAdvancedAnalysis, 500)
+    return () => clearTimeout(timeout)
+  }, [filters])
 
   return (
     <div className="analytics-page">
       <header className="analytics-header">
-        <h1>📈 Расширенная аналитика KPI</h1>
+        <h1>Расширенная аналитика KPI</h1>
+        {globalStats.actual_data_overview && (
+          <div className="period-info">
+            Период: {globalStats.actual_data_overview.period_analyzed} |
+            Лиды: {globalStats.actual_data_overview.leads_analyzed} |
+            Звонки: {globalStats.actual_data_overview.calls_analyzed} |
+            Контейнеры: {globalStats.actual_data_overview.containers_analyzed}
+          </div>
+        )}
+        {/* ДОБАВЛЕНО: ПРОИЗВОДИТЕЛЬНОСТЬ */}
+        {globalStats.performance && (
+          <div className="performance-info" style={{ marginTop: '8px', fontSize: '0.9em', color: '#555' }}>
+            <strong>Производительность:</strong> {globalStats.performance.total_seconds}с |
+            Лиды/с: {globalStats.performance.leads_per_second} |
+            Звонки/с: {globalStats.performance.calls_per_second} |
+            <em>{globalStats.performance.optimization}</em>
+          </div>
+        )}
       </header>
 
       <div className="filters-section">
-        <h3>🔧 Фильтры анализа</h3>
-
+        <h3>Фильтры</h3>
         <div className="filter-row">
-          <div className="filter-group">
-            <label>Дата с:</label>
-            <input
-              type="date"
-              value={filters.date_from}
-              onChange={e => setFilters({...filters, date_from: e.target.value})}
-            />
-          </div>
-          <div className="filter-group">
-            <label>Дата по:</label>
-            <input
-              type="date"
-              value={filters.date_to}
-              onChange={e => setFilters({...filters, date_to: e.target.value})}
-            />
-          </div>
-          <div className="filter-group">
-            <label>Вывод:</label>
-            <select
-              value={filters.output}
-              onChange={e => setFilters({...filters, output: e.target.value})}
-            >
-              <option value="Все">Все данные</option>
-              <option value="Есть активность">Только с активностью</option>
-              <option value="--">Только активные</option>
-            </select>
-          </div>
-          <div className="filter-group">
-            <label>Группировка:</label>
-            <select
-              value={filters.group_rows}
-              onChange={e => setFilters({...filters, group_rows: e.target.value})}
-            >
-              <option value="Нет">Без группировки</option>
-              <option value="Да">С группировкой</option>
-            </select>
-          </div>
+          <input type="date" value={filters.date_from} onChange={e => setFilters({...filters, date_from: e.target.value})} />
+          <input type="date" value={filters.date_to} onChange={e => setFilters({...filters, date_to: e.target.value})} />
+          <select value={filters.category} onChange={e => setFilters({...filters, category: e.target.value})}>
+            <option value="">Все категории</option>
+            {categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+          </select>
+          <select value={filters.output} onChange={e => setFilters({...filters, output: e.target.value})}>
+            <option value="Все">Все</option>
+            <option value="Есть активность">Активные</option>
+          </select>
         </div>
-
         <div className="filter-row">
-          <div className="filter-group">
-            <label>Категория:</label>
-            <input
-              type="text"
-              placeholder="Все категории"
-              value={filters.category}
-              onChange={e => setFilters({...filters, category: e.target.value})}
-            />
-          </div>
-          <div className="filter-group">
-            <label>Advertiser:</label>
-            <input
-              type="text"
-              placeholder="Все advertisers"
-              value={filters.advertiser}
-              onChange={e => setFilters({...filters, advertiser: e.target.value.toLowerCase()})}
-            />
-          </div>
-          <div className="filter-group">
-            <label>Оператор:</label>
-            <input
-              type="text"
-              placeholder="Все операторы"
-              value={filters.operator_name}
-              onChange={e => setFilters({...filters, operator_name: e.target.value.toLowerCase()})}
-            />
-          </div>
-          <div className="filter-group">
-            <label>ID Оффера:</label>
-            <input
-              type="text"
-              placeholder="Все офферы"
-              value={filters.offer_id}
-              onChange={e => setFilters({...filters, offer_id: e.target.value})}
-            />
-          </div>
+          <select value={filters.group_rows} onChange={e => setFilters({...filters, group_rows: e.target.value})}>
+            <option value="Нет">Без группировки</option>
+            <option value="Да">С группировкой</option>
+          </select>
+          <input type="text" placeholder="Advertiser" value={filters.advertiser} onChange={e => setFilters({...filters, advertiser: e.target.value.toLowerCase()})} />
+          <input type="text" placeholder="Оператор" value={filters.operator_name} onChange={e => setFilters({...filters, operator_name: e.target.value.toLowerCase()})} />
+          <input type="text" placeholder="ID Оффера" value={filters.offer_id} onChange={e => setFilters({...filters, offer_id: e.target.value})} />
         </div>
-
         <div className="action-buttons">
-          <button className="btn primary" onClick={loadAdvancedAnalysis} disabled={loading}>
-            {loading ? '🔄 Анализ...' : '📊 Запустить анализ'}
+          <button onClick={loadAdvancedAnalysis} disabled={loading} className="btn primary">
+            {loading ? 'Загрузка...' : 'Анализ'}
           </button>
-          <button className="btn secondary" onClick={loadGoogleSheetsFormat} disabled={loading}>
-            📋 Google Sheets формат
-          </button>
-          <button className="btn secondary" onClick={debugFirstRow}>
-                🐛    Дебаг данных
-          </button>
-          <button className="btn secondary" onClick={loadComparison}>
-            📊 Сравнить анализы
-          </button>
-          <button className="btn secondary" onClick={exportToCSV}>
-            📄 Экспорт в CSV
-          </button>
-          <button className="btn secondary" onClick={resetFilters}>
-            🗑️ Сбросить фильтры
-          </button>
+          <button onClick={exportToCSV} className="btn secondary">CSV</button>
+          <button onClick={resetFilters} className="btn secondary">Сброс</button>
         </div>
       </div>
 
-      {error && (
-        <div className="error-message">
-          ❌ {error}
-        </div>
-      )}
+      {error && <div className="error-message">{error}</div>}
 
       {recommendations.length > 0 && (
         <div className="recommendations-section">
-          <h3>💡 Рекомендации по KPI</h3>
+          <h3>Рекомендации</h3>
           <div className="recommendations-grid">
-            {recommendations.map((rec, index) => (
-              <div key={index} className="recommendation-card">
-                <div className="rec-header">
-                  <span className="rec-type">
-                    {rec.type === 'efficiency' ? '📈 Эффективность' :
-                     rec.type === 'approve_rate' ? '✅ Аппрув' : '💰 Выкуп'}
-                  </span>
-                  <span className="rec-category">{rec.category}</span>
-                </div>
-                <div className="rec-values">
-                  <span className="current">Текущее: {rec.current_value}</span>
-                  <span className="arrow">→</span>
-                  <span className="recommended">Реком.: {rec.recommended_value}</span>
-                </div>
-                {rec.comment && (
-                  <div className="rec-comment">{rec.comment}</div>
-                )}
+            {recommendations.map((rec, i) => (
+              <div key={i} className="recommendation-card">
+                <strong>{rec.category}</strong>: {rec.type === 'efficiency' ? 'Эфф.' : 'Аппрув'} {rec.current}% → <span style={{color: 'green'}}>{rec.recommended}%</span>
+                {rec.comment && <em> ({rec.comment})</em>}
               </div>
             ))}
           </div>
         </div>
       )}
 
-      {summary && Object.keys(summary).length > 0 && (
-        <div className="summary-section">
-          <h3>📊 Сводная статистика</h3>
-          <div className="stats-grid">
-            <div className="stat-item">
-              <div className="stat-value">{summary.total_categories || 0}</div>
-              <div className="stat-label">Категорий</div>
-            </div>
-            <div className="stat-item">
-              <div className="stat-value">{summary.total_offers || 0}</div>
-              <div className="stat-label">Офферов</div>
-            </div>
-            <div className="stat-item">
-              <div className="stat-value">{summary.total_operators || 0}</div>
-              <div className="stat-label">Операторов</div>
-            </div>
-            <div className="stat-item">
-              <div className="stat-value">{summary.total_effective_calls?.toLocaleString() || 0}</div>
-              <div className="stat-label">Эфф. звонков</div>
-            </div>
-            <div className="stat-item">
-              <div className="stat-value">{summary.overall_efficiency?.toFixed(1) || 0}%</div>
-              <div className="stat-label">Общая эффективность</div>
-            </div>
-            {summary.records_count && (
-              <div className="stat-item">
-                <div className="stat-value">{summary.records_count.toLocaleString()}</div>
-                <div className="stat-label">Всего записей</div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
       <div className="table-section">
-        <h3>📋 Детальные данные ({getRowData().length} записей)</h3>
-
+        <h3>Данные ({getRowData().length} строк)</h3>
         {loading ? (
-          <div className="loading-indicator">
-            Загрузка данных...
-          </div>
+          <div className="loading-indicator">Загрузка...</div>
         ) : getRowData().length === 0 ? (
-          <div className="no-data-message">
-            📊 Нет данных для отображения. Запустите анализ с выбранными фильтрами.
-            <br />
-            <small>Отладочная информация: advancedData.length = {advancedData.length}, тип = {advancedData.length > 0 ? (Array.isArray(advancedData[0]) ? 'массив' : 'объект') : 'пусто'}</small>
-          </div>
+          <div className="no-data-message">Нет данных</div>
         ) : (
-          <div
-            className="ag-theme-quartz"
-            style={{
-              height: '600px',
-              width: '100%',
-              marginTop: '15px'
-            }}
-          >
+          <div className="ag-theme-quartz" style={{ height: 600, width: '100%' }}>
             <AgGridReact
+              ref={gridRef}
               rowData={getRowData()}
-              columnDefs={getColumnDefs()}
-              defaultColDef={{
-                resizable: true,
-                sortable: true,
-                filter: true,
-                minWidth: 80,
-                flex: 1
-              }}
-              onGridReady={onGridReady}
+              columnDefs={columnDefs}
+              defaultColDef={{ resizable: true, sortable: true, filter: true }}
+              groupDisplayType="multipleColumns"
+              animateRows={true}
               pagination={true}
               paginationPageSize={50}
               paginationPageSizeSelector={[20, 50, 100]}
-              suppressFieldDotNotation={true}
-              enableCellTextSelection={true}
-              ensureDomOrder={true}
               getRowStyle={params => {
-                if (params.data && params.data[0] === 'Категория') {
-                  return { backgroundColor: '#f0f8ff', fontWeight: 'bold' }
-                }
-                if (params.data && params.data[0] === 'Оффер') {
-                  return { backgroundColor: '#f0fff0' }
-                }
+                if (params.data.type === 'category') return { backgroundColor: '#f0f8ff', fontWeight: 'bold' }
+                if (params.data.type === 'offer') return { backgroundColor: '#f8fff8' }
                 return null
               }}
             />

@@ -1,264 +1,343 @@
+from typing import List, Dict, Any, Optional
+from .kpi_analyzer import OpAnalyzeKPI, CategoryItem, OfferItem, CommonItem
 from .compatibility import GoogleScriptCompatibility
 from .statistics import safe_div
+from .formula_engine import FormulaEngine
 import logging
 
 logger = logging.getLogger(__name__)
 
 
 class KPIOutputFormatter:
-    """Форматирование вывода точно как в Google Apps Script эталоне"""
-
     def __init__(self):
+        self.op = OpAnalyzeKPI()
         self.gs = GoogleScriptCompatibility()
+        self.engine = FormulaEngine()
         self.BLANK_KEY = self.gs.BLANK_KEY
+        self.ROW_TITLE_CATEGORY = self.op.ROW_TITLE_CATEGORY
+        self.ROW_TITLE_OFFER = self.op.ROW_TITLE_OFFER
+        self.ROW_TITLE_OPERATOR = self.op.ROW_TITLE_OPERATOR
+        self.ROW_TITLE_AFF = self.op.ROW_TITLE_AFF
 
-        self.ROW_TITLE_CATEGORY = "Категория"
-        self.ROW_TITLE_OFFER = "Оффер"
-        self.ROW_TITLE_AFF = "Веб"
-        self.ROW_TITLE_OPERATOR = "Оператор"
-
-    def create_output_structure(self, stat_data):
-        """Создаем полную структуру вывода как в эталоне"""
-        print(f"🔍 DEBUG: Получено категорий для форматирования: {len(stat_data)}")
-
-        # 🔥 ДЕТАЛЬНАЯ ПРОВЕРКА ДАННЫХ
-        if stat_data:
-            first_category = stat_data[0]
-            print(f"🔍 DEBUG: Первая категория: {first_category.get('key')}")
-            print(f"🔍 DEBUG: KPI stat первой категории: {first_category.get('kpi_stat')}")
-            print(f"🔍 DEBUG: Lead container первой категории: {first_category.get('lead_container')}")
-            print(f"🔍 DEBUG: Офферы в первой категории: {len(first_category.get('offers', []))}")
-
-            if first_category.get('offers'):
-                first_offer = first_category['offers'][0]
-                print(f"🔍 DEBUG: Первый оффер: {first_offer.get('key')}")
-                print(f"🔍 DEBUG: KPI stat оффера: {first_offer.get('kpi_stat')}")
-                print(f"🔍 DEBUG: KPI plan оффера: {first_offer.get('kpi_current_plan')}")
-
+    # =============================================
+    # 1. ДЛЯ GOOGLE SHEETS
+    # =============================================
+    def create_output_structure(self, stat) -> List[List[Any]]:
         pd = []
-
         headers = self._create_headers()
         pd.append(headers)
-        print(f"DEBUG: Заголовки созданы: {len(headers)} колонок")
-
-        for i in range(13):
+        for _ in range(13):
             self._fill_blank_pd(pd)
 
-        if not stat_data:
-            print("DEBUG: Нет данных категорий для вывода!")
-            return pd
+        categories = stat.get_categories_list()
+        row_offset = 14
+        grouper = {"groups": []}
+        warnings = []
 
-        for i, category in enumerate(stat_data):
-            print(f"DEBUG: Обработка категории {i}: {category.get('key', 'NO_KEY')}")
-            print(f"DEBUG:   Офферов: {len(category.get('offers', []))}")
-            print(f"DEBUG:   Операторов: {len(category.get('operators', []))}")
+        for category in categories:
+            if not self._should_include_category(category):
+                continue
 
-            if self._should_include_category(category):
-                self._fill_blank_pd(pd)
-                self.print_pd_category(pd, category)
+            self._fill_blank_pd(pd)
+            category_row_idx = len(pd)
+            self.print_pd_category(pd, category)
 
-                self._fill_blank_pd(pd, 'Операторы')
-                for operator in category.get('operators', []):
-                    self.print_pd_operator(pd, operator)
+            # Офферы
+            self._fill_blank_pd(pd, "Офферы")
+            offer_start_row = len(pd)
+            for offer in category.offer.values():
+                if self._should_include_offer(offer):
+                    self.print_pd_offer(pd, offer, category, offer_start_row, row_offset)
 
-                self._fill_blank_pd(pd, 'Офферы')
-                for offer in category.get('offers', []):
-                    if self._should_include_offer(offer, category):
-                        self.print_pd_offer(pd, offer, category)
+                    # Предупреждения
+                    if offer.kpi_eff_need_correction:
+                        warnings.append({
+                            "row": len(pd),
+                            "col": self.op.col_recommendation + 1,
+                            "comment": offer.kpi_eff_need_correction_str
+                        })
+                    if offer.kpi_app_need_correction:
+                        warnings.append({
+                            "row": len(pd),
+                            "col": self.op.col_approve_recommendation + 2,
+                            "comment": offer.kpi_app_need_correction_str
+                        })
+                    if offer.kpi_buyout_need_correction:
+                        warnings.append({
+                            "row": len(pd),
+                            "col": self.op.col_buyout_recommendation + 2,
+                            "comment": offer.kpi_buyout_need_correction_str
+                        })
 
-                self._fill_blank_pd(pd, 'Вебмастера')
-                for aff in category.get('affiliates', []):
-                    self.print_pd_aff(pd, aff)
-            else:
-                print(f"DEBUG: Категория {category.get('key')} исключена по фильтру")
+            offer_end_row = len(pd) - 1
 
-        print(f"DEBUG: Итоговый массив: {len(pd)} строк")
-        return pd
+            # Операторы
+            self._fill_blank_pd(pd, "Операторы")
+            op_start = len(pd)
+            for operator in category.operator.values():
+                self.print_pd_operator(pd, operator)
+            op_end = len(pd) - 1
 
-    def _create_headers(self):
+            # Вебмастера
+            self._fill_blank_pd(pd, "Вебмастера")
+            aff_start = len(pd)
+            for aff in category.aff.values():
+                self.print_pd_aff(pd, aff)
+            aff_end = len(pd) - 1
+
+            # Группировка
+            grouper["groups"].append({"start": offer_start_row, "end": offer_end_row})
+            grouper["groups"].append({"start": op_start, "end": op_end})
+            grouper["groups"].append({"start": aff_start, "end": aff_end})
+            grouper["groups"].append({"start": category_row_idx, "end": len(pd) - 1})
+
+        return pd, grouper["groups"], warnings
+
+    def format_for_frontend(self, stat, group_rows: str = 'Нет') -> Dict[str, Any]:
+        data = []
+        groups = []
+        recommendations = []
+        current_row = 0
+
+        for cat in stat.category.values():
+            if not (cat.kpi_stat.calls_group_effective_count >= 5 or cat.lead_container.leads_non_trash_count >= 5):
+                continue
+
+            group_start = current_row
+            cat_data = {
+                'type': 'category',
+                'description': cat.description,
+                'kpi_stat': {
+                    'calls_group_effective_count': cat.kpi_stat.calls_group_effective_count,
+                    'leads_effective_count': cat.kpi_stat.leads_effective_count,
+                    'effective_percent': cat.kpi_stat.effective_percent,
+                    'effective_rate': cat.kpi_stat.effective_rate,
+                    'expecting_effective_rate': cat.kpi_stat.expecting_effective_rate,
+                },
+                'lead_container': {
+                    'leads_non_trash_count': getattr(cat.lead_container, 'leads_non_trash_count', 0),
+                    'leads_approved_count': getattr(cat.lead_container, 'leads_approved_count', 0),
+                    'leads_buyout_count': getattr(cat.lead_container, 'leads_buyout_count', 0),
+                },
+                'approve_percent_fact': cat.approve_percent_fact,
+                'approve_rate_plan': cat.approve_rate_plan,
+                'buyout_percent_fact': cat.buyout_percent_fact,
+                'offers': [],
+                'operators': [
+                    {
+                        'type': 'operator',
+                        'key': op.key,
+                        'description': op.key,
+                        'kpi_stat': {
+                            'calls_group_effective_count': op.kpi_stat.calls_group_effective_count,
+                            'leads_effective_count': op.kpi_stat.leads_effective_count,
+                            'effective_percent': op.kpi_stat.effective_percent,
+                            'effective_rate': op.kpi_stat.effective_rate,
+                        }
+                    } for op in cat.operator.values()
+                ],
+                'affiliates': [
+                    {
+                        'type': 'affiliate',
+                        'key': aff.key,
+                        'description': f"Веб #{aff.key}",
+                        'kpi_stat': {
+                            'calls_group_effective_count': aff.kpi_stat.calls_group_effective_count,
+                            'leads_effective_count': aff.kpi_stat.leads_effective_count,
+                            'effective_percent': aff.kpi_stat.effective_percent,
+                            'effective_rate': aff.kpi_stat.effective_rate,
+                        }
+                    } for aff in cat.aff.values()
+                ],
+            }
+
+            for offer in cat.offer.values():
+                if not (offer.kpi_stat.calls_group_effective_count >= 5 or getattr(offer.lead_container, 'leads_non_trash_count', 0) >= 5):
+                    continue
+
+                kpi_plan = offer.kpi_current_plan
+                offer_data = {
+                    'type': 'offer',
+                    'key': offer.key,
+                    'description': offer.description,
+                    'kpi_stat': {
+                        'calls_group_effective_count': offer.kpi_stat.calls_group_effective_count,
+                        'leads_effective_count': offer.kpi_stat.leads_effective_count,
+                        'effective_percent': offer.kpi_stat.effective_percent,
+                        'effective_rate': offer.kpi_stat.effective_rate,
+                    },
+                    'lead_container': {
+                        'leads_non_trash_count': getattr(offer.lead_container, 'leads_non_trash_count', 0),
+                        'leads_approved_count': getattr(offer.lead_container, 'leads_approved_count', 0),
+                        'leads_buyout_count': getattr(offer.lead_container, 'leads_buyout_count', 0),
+                    },
+                    'kpi_current_plan': {
+                        'operator_efficiency': kpi_plan.operator_efficiency if kpi_plan else None,
+                        'planned_approve': kpi_plan.planned_approve if kpi_plan else None,
+                        'planned_buyout': kpi_plan.planned_buyout if kpi_plan else None,
+                        'confirmation_price': kpi_plan.confirmation_price if kpi_plan else None,
+                        'operator_efficiency_update_date': getattr(kpi_plan, 'operator_efficiency_update_date', None) if kpi_plan else None,
+                        'planned_approve_update_date': getattr(kpi_plan, 'planned_approve_update_date', None) if kpi_plan else None,
+                        'planned_buyout_update_date': getattr(kpi_plan, 'planned_buyout_update_date', None) if kpi_plan else None,
+                    } if kpi_plan else None,
+                    'recommended_efficiency': offer.recommended_efficiency.value if offer.recommended_efficiency else None,
+                    'recommended_approve': offer.recommended_approve.value if offer.recommended_approve else None,
+                    'recommended_buyout': offer.recommended_buyout.value if offer.recommended_buyout else None,
+                    'recommended_confirmation_price': offer.recommended_confirmation_price.value if offer.recommended_confirmation_price else None,
+                    'kpi_eff_need_correction': offer.kpi_eff_need_correction_str,
+                    'kpi_app_need_correction': offer.kpi_app_need_correction_str,
+                    'kpi_buyout_need_correction': offer.kpi_buyout_need_correction_str,
+                    'kpi_confirmation_price_need_correction': offer.kpi_confirmation_price_need_correction_str,
+                }
+                cat_data['offers'].append(offer_data)
+                current_row += 1  # каждый оффер — +1 строка
+
+            data.append(cat_data)
+            current_row += 1  # категория — 1 строка
+
+            if group_rows == 'Да' and len(cat_data['offers']) > 0:
+                groups.append({'start': group_start, 'end': current_row - 1})
+
+            if getattr(cat, 'recommended_efficiency', None) and cat.recommended_efficiency.value is not None:
+                recommendations.append({
+                    'type': 'efficiency',
+                    'category': cat.description,
+                    'current': round(cat.kpi_stat.effective_percent or 0, 1),
+                    'recommended': round(cat.recommended_efficiency.value, 1),
+                    'comment': cat.recommended_efficiency.comment
+                })
+            if getattr(cat, 'recommended_approve', None) and cat.recommended_approve.value is not None:
+                recommendations.append({
+                    'type': 'approve',
+                    'category': cat.description,
+                    'current': round(cat.approve_percent_fact or 0, 1),
+                    'recommended': round(cat.recommended_approve.value, 1),
+                    'comment': cat.recommended_approve.comment
+                })
+
+        return {
+            'data': data,
+            'groups': groups if group_rows == 'Да' else [],
+            'recommendations': recommendations
+        }
+
+    def _create_headers(self) -> List[Any]:
         return [
-            "Тип данных", "Категория", "ID Оффер", "Оффер", "ID Вебмастер", "Оператор",
+            "Тип данных", "ID Оффер", "Оффер", "ID Вебмастер", "Оператор",
             "Ко-во звонков (эфф)", "Ко-во продаж (эфф)", "% эффективности", self.BLANK_KEY,
             "Эфф. факт", "Эфф. план", "Дата обновления", "Тип Плана", "Эфф. рекоммендация",
             "Дата обновления", "Требуется коррекция", self.BLANK_KEY,
             "Ко-во лидов (без треша)", "Ко-во аппрувов", "% аппрува факт", "% аппрува план",
             "% аппрува рекоммендация", "Дата обновления", "Требуется коррекция", self.BLANK_KEY,
-            "% выкупа", "Ко-во выкупов", "% выкупа факт", "% выкупа план", "% выкупа рекоммендация",
-            "Дата обновления", "Требуется коррекция", "[СВОД]", "Эфф. Рек.", "Коррекция?",
-            "Апп. Рек.", "Коррекция?", "Чек Рек.", "Коррекция?", "Выкуп. Рек.", "Коррекция?",
-            "Ссылка"
+            "% выкупа", "Ко-во выкупов", "% выкупа факт", "% выкупа план",
+            "% выкупа рекоммендация", "Дата обновления", "Требуется коррекция",
+            "[СВОД]", "Эфф. Рек.", "Коррекция?", "Апп. Рек.", "Коррекция?",
+            "Чек Рек.", "Коррекция?", "Выкуп. Рек.", "Коррекция?", "Ссылка"
         ]
 
-    def _fill_blank_pd(self, pd, label=None):
+    def _fill_blank_pd(self, pd: List, label: str = None):
         row = [self.BLANK_KEY] * 43
         if label:
             row[0] = label
         pd.append(row)
 
-    def _should_include_category(self, category):
-        kpi_stat = category.get('kpi_stat', {})
-        lead_container = category.get('lead_container', {})
+    def _should_include_category(self, category: CategoryItem) -> bool:
+        return (category.kpi_stat.calls_group_effective_count >= 5 or category.lead_container.leads_non_trash_count >= 5)
 
-        # 🔥 ВРЕМЕННО ВКЛЮЧАЕМ ВСЕ КАТЕГОРИИ ДАЖЕ С НУЛЕВЫМИ ДАННЫМИ
-        has_calls = kpi_stat.get('calls_group_effective_count', 0) >= 0  # Всегда True
-        has_leads = lead_container.get('leads_non_trash_count', 0) >= 0  # Всегда True
+    def _should_include_offer(self, offer: OfferItem) -> bool:
+        return (offer.kpi_stat.calls_group_effective_count >= 5 or offer.lead_container.leads_non_trash_count >= 5)
 
-        logger.debug(
-            f"Фильтр категории {category.get('key')}: calls={kpi_stat.get('calls_group_effective_count', 0)}, leads={lead_container.get('leads_non_trash_count', 0)}")
-        return has_calls or has_leads
+    def _cell_ref(self, row, col):
+        col_letter = ""
+        while col >= 0:
+            col_letter = chr(ord('A') + (col % 26)) + col_letter
+            col = col // 26 - 1
+        return f"{col_letter}{row + 1}"
 
-    def _should_include_offer(self, offer, category):
-        kpi_stat = offer.get('kpi_stat', {})
-        lead_container = category.get('lead_container', {})
-
-        # 🔥 ВРЕМЕННО ВКЛЮЧАЕМ ВСЕ ОФФЕРЫ
-        has_calls = kpi_stat.get('calls_group_effective_count', 0) >= 0  # Всегда True
-        has_leads = lead_container.get('leads_non_trash_count', 0) >= 0  # Всегда True
-
-        logger.debug(
-            f"Фильтр оффера {offer.get('key')}: calls={kpi_stat.get('calls_group_effective_count', 0)}, leads={lead_container.get('leads_non_trash_count', 0)}")
-        return has_calls or has_leads
-
-    def print_pd_category(self, pd, category):
+    def print_pd_category(self, pd: List, category: CategoryItem):
         row = [self.BLANK_KEY] * 43
-
         row[0] = self.ROW_TITLE_CATEGORY
-        row[1] = category.get('key', '')
-
-        kpi_stat = category.get('kpi_stat', {})
-        lead_container = category.get('lead_container', {})
-        recommendations = category.get('recommendations', {})
-
-        row[6] = kpi_stat.get('calls_group_effective_count', 0) or 0
-        row[7] = kpi_stat.get('leads_effective_count', 0) or 0
-        row[8] = self.gs.print_float(kpi_stat.get('effective_percent', 0)) or "0"
-
-        row[10] = self.gs.print_float(kpi_stat.get('effective_rate', 0)) or "0.00"
-        row[11] = self.gs.print_float(kpi_stat.get('expecting_effective_rate', 0)) or "0.00"
-
-        eff_recommendation = recommendations.get('efficiency', {})
-        row[14] = self.gs.print_float(eff_recommendation.get('value')) or "0.00"
-
-        row[18] = lead_container.get('leads_non_trash_count', 0) or 0
-        row[19] = lead_container.get('leads_approved_count', 0) or 0
-
-        approved_count = lead_container.get('leads_approved_count', 0) or 0
-        non_trash_count = lead_container.get('leads_non_trash_count', 0) or 1
-        row[20] = self.gs.print_percent("", approved_count, non_trash_count, "") or "0%"
-
-        row[21] = f"{self.gs.print_float(category.get('approve_rate_plan', 0)) or '0'}%"
-
-        app_recommendation = recommendations.get('approve', {})
-        row[22] = self.gs.print_float(app_recommendation.get('value')) or "0"
-
-        row[27] = lead_container.get('leads_buyout_count', 0) or 0
-        row[28] = self.gs.print_float(category.get('buyout_percent_fact', 0)) or "0"
-
-        row[29] = self.gs.print_float(category.get('buyout_rate_plan', 0)) or "0"
-
-        buyout_recommendation = recommendations.get('buyout', {})
-        row[30] = self.gs.print_float(buyout_recommendation.get('value')) or "0"
-
-        row[34] = self.gs.print_float(eff_recommendation.get('value')) or "0.00"
-        row[36] = self.gs.print_float(app_recommendation.get('value')) or "0"
-
-        price_recommendation = recommendations.get('confirmation_price', {})
-        row[38] = self.gs.print_float(price_recommendation.get('value')) or "0"
-        row[40] = self.gs.print_float(buyout_recommendation.get('value')) or "0"
-
+        row[2] = category.description
         pd.append(row)
 
-    def print_pd_offer(self, pd, offer, category):
+    def print_pd_offer(self, pd: List, offer: OfferItem, category: CategoryItem, offer_start_row: int, row_offset: int):
+        row_idx = len(pd)
         row = [self.BLANK_KEY] * 43
-
         row[0] = self.ROW_TITLE_OFFER
-        row[1] = category.get('key', '')
-        row[2] = offer.get('key', '')
-        row[3] = offer.get('description', '')
+        row[1] = offer.key
+        row[2] = offer.description
+        s = offer.kpi_stat
+        row[5] = s.calls_group_effective_count
+        row[6] = s.leads_effective_count
+        calls_ref = self._cell_ref(row_idx, 5)
+        leads_ref = self._cell_ref(row_idx, 6)
+        row[7] = f"=ЭФФЕКТИВНОСТЬ({calls_ref},{leads_ref})"
+        row[9] = self.gs.print_float(s.effective_rate)
 
-        kpi_stat = offer.get('kpi_stat', {})
-        lead_container = offer.get('lead_container', {})
-        corrections = offer.get('corrections', {})
+        plan = offer.kpi_current_plan
+        if plan:
+            row[10] = self.gs.print_float(plan.operator_efficiency or 0)
+            row[11] = plan.operator_efficiency_update_date or self.BLANK_KEY
+            row[20] = self.gs.print_float(plan.planned_approve or 0)
+            row[27] = self.gs.print_float(plan.planned_buyout or 0)
+            row[22] = plan.planned_approve_update_date if plan else self.BLANK_KEY
+            row[29] = plan.planned_buyout_update_date if plan else self.BLANK_KEY
 
-        row[6] = kpi_stat.get('calls_group_effective_count', 0) or 0
-        row[7] = kpi_stat.get('leads_effective_count', 0) or 0
-        row[8] = self.gs.print_float(kpi_stat.get('effective_percent', 0)) or "0"
+        row[13] = self.gs.print_float(offer.recommended_efficiency.value or 0)
+        if offer.kpi_eff_need_correction:
+            row[15] = offer.kpi_eff_need_correction_str
 
-        row[10] = self.gs.print_float(kpi_stat.get('effective_rate', 0)) or "0.00"
+        lc = offer.lead_container
+        row[17] = lc.leads_non_trash_count
+        row[18] = lc.leads_approved_count
+        non_trash_ref = self._cell_ref(row_idx, 17)
+        approved_ref = self._cell_ref(row_idx, 18)
+        row[19] = f"=АППРУВ_ПРОЦЕНТ({approved_ref},{non_trash_ref})"
+        if offer.recommended_approve:
+            row[21] = self.gs.print_float(offer.recommended_approve.value or 0)
+        if offer.kpi_app_need_correction:
+            row[23] = offer.kpi_app_need_correction_str
 
-        kpi_plan = offer.get('kpi_current_plan', {})
-        row[11] = self.gs.print_float(kpi_plan.get('operator_efficiency', 0)) or "0.00"
-        row[12] = kpi_plan.get('operator_effeciency_update_date', self.BLANK_KEY)
+        row[25] = lc.leads_buyout_count
+        row[26] = f"=ВЫКУП_ПРОЦЕНТ({self._cell_ref(row_idx, 25)},{approved_ref})"
+        if offer.recommended_buyout:
+            row[28] = self.gs.print_float(offer.recommended_buyout.value or 0)
+        if offer.kpi_buyout_need_correction:
+            row[30] = offer.kpi_buyout_need_correction_str
 
-        eff_recommendation = offer.get('recommended_effeciency', {})
-        row[14] = self.gs.print_float(eff_recommendation.get('value')) or "0.00"
-        row[15] = kpi_plan.get('operator_effeciency_update_date', self.BLANK_KEY)
-        row[16] = corrections.get('efficiency', '')
-
-        row[18] = lead_container.get('leads_non_trash_count', 0) or 0
-        row[19] = lead_container.get('leads_approved_count', 0) or 0
-
-        approved_count = lead_container.get('leads_approved_count', 0) or 0
-        non_trash_count = lead_container.get('leads_non_trash_count', 0) or 1
-        row[20] = self.gs.print_percent("", approved_count, non_trash_count, "") or "0%"
-
-        row[21] = self.gs.print_float(kpi_plan.get('planned_approve', 0)) or "0"
-
-        app_recommendation = offer.get('recommended_approve', {})
-        row[22] = self.gs.print_float(app_recommendation.get('value')) or "0"
-        row[23] = kpi_plan.get('planned_approve_update_date', self.BLANK_KEY)
-        row[24] = corrections.get('approve', '')
-
-        row[29] = self.gs.print_float(kpi_plan.get('planned_buyout', 0)) or "0"
-
-        buyout_recommendation = offer.get('recommended_buyout', {})
-        row[30] = self.gs.print_float(buyout_recommendation.get('value')) or "0"
-        row[31] = kpi_plan.get('planned_buyout_update_date', self.BLANK_KEY)
-        row[32] = corrections.get('buyout', '')
-
-        row[34] = self.gs.print_float(eff_recommendation.get('value')) or "0.00"
-        row[35] = corrections.get('efficiency', '')
-        row[36] = self.gs.print_float(app_recommendation.get('value')) or "0"
-        row[37] = corrections.get('approve', '')
-
-        price_recommendation = offer.get('recommended_confirmation_price', {})
-        row[38] = self.gs.print_float(price_recommendation.get('value')) or "0"
-        row[39] = corrections.get('confirmation_price', '')
-        row[40] = self.gs.print_float(buyout_recommendation.get('value')) or "0"
-        row[41] = corrections.get('buyout', '')
-
-        offer_key = offer.get('key', '')
-        if offer_key and str(offer_key).isdigit():
-            row[42] = f'=HYPERLINK("https://admin.crm.itvx.biz/partners/tloffer/{offer_key}/change/";"{offer_key}")'
+        # СВОД
+        row[32] = self.gs.print_float(offer.recommended_efficiency.value or 0)
+        row[33] = "Да" if offer.kpi_eff_need_correction else ""
+        row[34] = self.gs.print_float(offer.recommended_approve.value or 0) if offer.recommended_approve else ""
+        row[35] = "Да" if offer.kpi_app_need_correction else ""
+        row[36] = self.gs.print_float(offer.recommended_confirmation_price.value or 0) if offer.recommended_confirmation_price else ""
+        row[37] = "Да" if offer.kpi_confirmation_price_need_correction else ""
+        row[38] = self.gs.print_float(offer.recommended_buyout.value or 0) if offer.recommended_buyout else ""
+        row[39] = "Да" if offer.kpi_buyout_need_correction else ""
+        row[41] = f'=HYPERLINK("https://admin.crm.itvx.biz/partners/tloffer/{offer.key}/change/";"{offer.key}")'
 
         pd.append(row)
 
-    def print_pd_operator(self, pd, operator):
+    def print_pd_operator(self, pd: List, operator: CommonItem):
+        row_idx = len(pd)
         row = [self.BLANK_KEY] * 43
-
         row[0] = self.ROW_TITLE_OPERATOR
-        row[5] = operator.get('key', '')
-
-        kpi_stat = operator.get('kpi_stat', {})
-
-        row[6] = kpi_stat.get('calls_group_effective_count', 0) or 0
-        row[7] = kpi_stat.get('leads_effective_count', 0) or 0
-        row[8] = self.gs.print_float(kpi_stat.get('effective_percent', 0)) or "0"
-        row[10] = self.gs.print_float(kpi_stat.get('effective_rate', 0)) or "0.00"
-
+        row[4] = operator.key
+        s = operator.kpi_stat
+        row[5] = s.calls_group_effective_count
+        row[6] = s.leads_effective_count
+        row[7] = f"=ЭФФЕКТИВНОСТЬ({self._cell_ref(row_idx, 5)},{self._cell_ref(row_idx, 6)})"
+        row[9] = self.gs.print_float(s.effective_rate)
         pd.append(row)
 
-    def print_pd_aff(self, pd, aff):
+    def print_pd_aff(self, pd: List, aff: CommonItem):
+        row_idx = len(pd)
         row = [self.BLANK_KEY] * 43
-
         row[0] = self.ROW_TITLE_AFF
-        row[4] = aff.get('key', '')
-
-        kpi_stat = aff.get('kpi_stat', {})
-
-        row[6] = kpi_stat.get('calls_group_effective_count', 0) or 0
-        row[7] = kpi_stat.get('leads_effective_count', 0) or 0
-        row[8] = self.gs.print_float(kpi_stat.get('effective_percent', 0)) or "0"
-        row[10] = self.gs.print_float(kpi_stat.get('effective_rate', 0)) or "0.00"
-
+        row[3] = aff.key
+        s = aff.kpi_stat
+        row[5] = s.calls_group_effective_count
+        row[6] = s.leads_effective_count
+        row[7] = f"=ЭФФЕКТИВНОСТЬ({self._cell_ref(row_idx, 5)},{self._cell_ref(row_idx, 6)})"
+        row[9] = self.gs.print_float(s.effective_rate)
         pd.append(row)

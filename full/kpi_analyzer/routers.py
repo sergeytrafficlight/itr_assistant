@@ -2,7 +2,6 @@ class ITradeRouter:
     """
     ВСЁ приложение kpi_analyzer — работает с default (kpi_db)
     База itrade — ТОЛЬКО для ручного чтения через .using('itrade')
-    НИКАКИХ автоматических запросов в itrade!
     """
 
     def db_for_read(self, model, **hints):

@@ -1,21 +1,19 @@
 from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 from .models import Cell, CellDependency
-from .formula_engine import FormulaEngine
+from .services.formula_engine import FormulaEngine
 
 
 @receiver(post_save, sender=Cell)
 def update_cell_dependencies(sender, instance, **kwargs):
     """Обновление зависимостей ячейки при сохранении"""
     try:
-        from .formula_engine import FormulaEngine  # Локальный импорт
         formula_engine = FormulaEngine()
 
         if instance.formula:
             dependencies = formula_engine.extract_dependencies(instance.formula)
 
             # Удаляем старые зависимости
-            from .models import CellDependency
             CellDependency.objects.filter(cell=instance).delete()
 
             # Создаем новые зависимости
@@ -33,15 +31,17 @@ def update_cell_dependencies(sender, instance, **kwargs):
                 except Cell.DoesNotExist:
                     continue
     except Exception as e:
-        print(f"❌ Ошибка обновления зависимостей: {e}")
+        print(f"Ошибка обновления зависимостей: {e}")
+
 
 @receiver(post_save, sender=Cell)
 def recalculate_dependent_cells(sender, instance, **kwargs):
     """Пересчет зависимых ячеек при изменении"""
+    # Находим ячейки, которые зависят от текущей
     dependent_cells = Cell.objects.filter(
         dependencies__depends_on=instance
     ).distinct()
-    
+
     formula_engine = FormulaEngine()
     for cell in dependent_cells:
         if cell.formula:
@@ -52,6 +52,7 @@ def recalculate_dependent_cells(sender, instance, **kwargs):
             except Exception as e:
                 cell.computed_value = f"#ERROR: {str(e)}"
                 cell.save(update_fields=['computed_value'])
+
 
 @receiver(post_delete, sender=Cell)
 def cleanup_dependencies(sender, instance, **kwargs):

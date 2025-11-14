@@ -1,9 +1,7 @@
 from celery import shared_task
 from django.db import connections
 from django.utils import timezone
-from .models import Category, Offer, Operator, Affiliate
 import logging
-from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +24,7 @@ def sync_kpi_data_from_itrade():
 def update_formula_dependencies():
     """Задача для обновления зависимостей формул"""
     try:
-        from .formula_engine import FormulaEngine
+        from full.kpi_analyzer.services.formula_engine import FormulaEngine
         from .models import Cell
         
         formula_engine = FormulaEngine()

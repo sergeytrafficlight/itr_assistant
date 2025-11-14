@@ -8,7 +8,9 @@ export default defineConfig({
     proxy: {
       '/api': {
         target: 'http://localhost:8000',
-        changeOrigin: true
+        changeOrigin: true,
+        timeout: 3000000,
+        proxyTimeout: 3000000
       },
       '/ws': {
         target: 'http://localhost:8000',
@@ -16,9 +18,5 @@ export default defineConfig({
         ws: true
       }
     }
-  },
-  build: {
-    outDir: 'dist',
-    sourcemap: true
   }
 })
