@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import axios from 'axios'
 import { AgGridReact } from 'ag-grid-react'
 import 'ag-grid-community/styles/ag-grid.css'
@@ -8,7 +8,7 @@ import './AnalyticsPage.css'
 const AnalyticsPage = () => {
   const [advancedData, setAdvancedData] = useState([])
   const [recommendations, setRecommendations] = useState([])
-  const [globalStats, setGlobalStats] = useState({})
+  const [performance, setPerformance] = useState({})
   const [categories, setCategories] = useState([])
   const [filters, setFilters] = useState({
     date_from: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
@@ -24,6 +24,9 @@ const AnalyticsPage = () => {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const gridRef = useRef()
+  const cancelToken = useRef(null)
+  const firstRender = useRef(true)
+  const filterDebounce = useRef(null)
 
   // === ЗАГРУЗКА КАТЕГОРИЙ ===
   const loadCategories = async () => {
@@ -37,17 +40,21 @@ const AnalyticsPage = () => {
   }
 
   // === АНАЛИЗ ===
-  const loadAdvancedAnalysis = async () => {
+  const loadAdvancedAnalysis = useCallback(async () => {
+    if (cancelToken.current) cancelToken.current.cancel('Отмена предыдущего запроса')
+    cancelToken.current = axios.CancelToken.source()
+
     setLoading(true)
     setError('')
+
     try {
-      const res = await axios.post('/api/kpi/advanced_analysis/', filters)
+      const res = await axios.post('/api/kpi/advanced_analysis/', filters, { cancelToken: cancelToken.current.token })
       if (res.data.success) {
         setAdvancedData(res.data.data || [])
         setRecommendations(res.data.recommendations || [])
-        setGlobalStats(res.data.global_stats || {})
+        setPerformance(res.data.performance || {})
 
-        // ГРУППИРОВКА
+        // Группировка
         if (res.data.groups && gridRef.current?.api) {
           setTimeout(() => {
             res.data.groups.forEach(g => {
@@ -62,21 +69,22 @@ const AnalyticsPage = () => {
         setError(res.data.error || 'Ошибка анализа')
       }
     } catch (err) {
-      setError(err.response?.data?.error || 'Сервер недоступен')
-      console.error('Ошибка запроса:', err)
+      if (!axios.isCancel(err)) {
+        setError(err.response?.data?.error || 'Сервер недоступен')
+        console.error('Ошибка запроса:', err)
+      }
     } finally {
       setLoading(false)
     }
-  }
+  }, [filters])
 
   // === ДАННЫЕ ДЛЯ ГРИДА ===
-  const getRowData = () => {
+  const getRowData = useCallback(() => {
     if (!advancedData.length) return []
     const rows = []
     let rowId = 0
 
     advancedData.forEach(cat => {
-      // КАТЕГОРИЯ
       rows.push({
         id: rowId++,
         type: 'category',
@@ -94,7 +102,6 @@ const AnalyticsPage = () => {
         buyout_percent_fact: cat.buyout_percent_fact || 0,
       })
 
-      // ОФФЕРЫ
       cat.offers?.forEach(offer => {
         rows.push({
           id: rowId++,
@@ -108,13 +115,12 @@ const AnalyticsPage = () => {
           effective_rate: offer.kpi_stat?.effective_rate || 0,
           leads_non_trash: offer.lead_container?.leads_non_trash_count || 0,
           leads_approved: offer.lead_container?.leads_approved_count || 0,
-          approve_percent_fact: offer.approve_percent_fact || 0,
+          approve_percent_fact: safeDiv(offer.lead_container?.leads_approved_count, offer.lead_container?.leads_non_trash_count) * 100 || 0,
           leads_buyout: offer.lead_container?.leads_buyout_count || 0,
-          buyout_percent_fact: offer.buyout_percent_fact || 0,
+          buyout_percent_fact: safeDiv(offer.lead_container?.leads_buyout_count, offer.lead_container?.leads_approved_count) * 100 || 0,
         })
       })
 
-      // ОПЕРАТОРЫ
       cat.operators?.forEach(op => {
         rows.push({
           id: rowId++,
@@ -128,7 +134,6 @@ const AnalyticsPage = () => {
         })
       })
 
-      // АФФИЛИАТЫ
       cat.affiliates?.forEach(aff => {
         rows.push({
           id: rowId++,
@@ -144,7 +149,33 @@ const AnalyticsPage = () => {
     })
 
     return rows
-  }
+  }, [advancedData])
+
+  // Вспомогательная функция для безопасного деления
+  const safeDiv = (a, b) => b ? a / b : 0
+
+  // === useEffect при монтировании ===
+  useEffect(() => {
+    const init = async () => {
+      await loadCategories()
+      await loadAdvancedAnalysis()
+    }
+    init()
+  }, [loadAdvancedAnalysis])
+
+  // === useEffect при изменении фильтров с дебаунсом ===
+  useEffect(() => {
+    if (firstRender.current) {
+      firstRender.current = false
+      return
+    }
+    if (filterDebounce.current) clearTimeout(filterDebounce.current)
+    filterDebounce.current = setTimeout(() => {
+      loadAdvancedAnalysis()
+    }, 500)
+
+    return () => clearTimeout(filterDebounce.current)
+  }, [filters, loadAdvancedAnalysis])
 
   // === КОЛОНКИ ===
   const columnDefs = [
@@ -195,40 +226,15 @@ const AnalyticsPage = () => {
     })
   }
 
-  // === ЗАГРУЗКА ПРИ МОНТИРОВАНИИ ===
-  useEffect(() => {
-    const init = async () => {
-      await loadCategories()
-      await loadAdvancedAnalysis()
-    }
-    init()
-  }, [])
-
-  // === ПЕРЕЗАГРУЗКА ПРИ ИЗМЕНЕНИИ ФИЛЬТРОВ ===
-  useEffect(() => {
-    const timeout = setTimeout(loadAdvancedAnalysis, 500)
-    return () => clearTimeout(timeout)
-  }, [filters])
-
   return (
     <div className="analytics-page">
       <header className="analytics-header">
         <h1>Расширенная аналитика KPI</h1>
-        {globalStats.actual_data_overview && (
-          <div className="period-info">
-            Период: {globalStats.actual_data_overview.period_analyzed} |
-            Лиды: {globalStats.actual_data_overview.leads_analyzed} |
-            Звонки: {globalStats.actual_data_overview.calls_analyzed} |
-            Контейнеры: {globalStats.actual_data_overview.containers_analyzed}
-          </div>
-        )}
-        {/* ДОБАВЛЕНО: ПРОИЗВОДИТЕЛЬНОСТЬ */}
-        {globalStats.performance && (
-          <div className="performance-info" style={{ marginTop: '8px', fontSize: '0.9em', color: '#555' }}>
-            <strong>Производительность:</strong> {globalStats.performance.total_seconds}с |
-            Лиды/с: {globalStats.performance.leads_per_second} |
-            Звонки/с: {globalStats.performance.calls_per_second} |
-            <em>{globalStats.performance.optimization}</em>
+        {performance && (
+          <div className="performance-info">
+            <strong>Производительность:</strong> {performance.total_seconds}с |
+            Лидов: {performance.leads_count} |
+            Звонков: {performance.calls_count}
           </div>
         )}
       </header>

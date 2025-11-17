@@ -341,3 +341,64 @@ class KPIOutputFormatter:
         row[7] = f"=ЭФФЕКТИВНОСТЬ({self._cell_ref(row_idx, 5)},{self._cell_ref(row_idx, 6)})"
         row[9] = self.gs.print_float(s.effective_rate)
         pd.append(row)
+
+    def format_for_excel(self, stat) -> List[List[Any]]:
+        """Форматирует данные для Excel-выгрузки"""
+        rows = []
+
+        # Заголовки
+        headers = [
+            'Type', 'Category', 'Name', 'Approve Plan', 'Approve Fact', 'Approve Rec',
+            'Buyout Plan', 'Buyout Fact', 'Buyout Rec', 'Efficiency Rec',
+            'Confirmation Price', 'Needs Correction', 'Comment'
+        ]
+        rows.append(headers)
+
+        # Данные по категориям и офферам
+        for cat in stat.category.values():
+            if not self._should_include_category(cat):
+                continue
+
+            # Категория
+            rows.append([
+                'category',
+                cat.description,
+                '',  # Name пустой для категории
+                '',  # Approve Plan
+                round(cat.approve_percent_fact or 0, 1),
+                round(cat.recommended_approve.value or 0, 1) if cat.recommended_approve else '',
+                '',  # Buyout Plan
+                round(cat.buyout_percent_fact or 0, 1),
+                round(cat.recommended_buyout.value or 0, 1) if cat.recommended_buyout else '',
+                round(cat.recommended_efficiency.value or 0, 1) if cat.recommended_efficiency else '',
+                cat.recommended_confirmation_price.value if cat.recommended_confirmation_price else '',
+                '✅' if any([cat.recommended_efficiency, cat.recommended_approve, cat.recommended_buyout]) else '❌',
+                getattr(cat.recommended_efficiency, 'comment', '') or getattr(cat.recommended_approve, 'comment', '')
+            ])
+
+            # Офферы в категории
+            for offer in cat.offer.values():
+                if not self._should_include_offer(offer):
+                    continue
+
+                kpi_plan = offer.kpi_current_plan
+                rows.append([
+                    'offer',
+                    cat.description,
+                    offer.description,
+                    round(kpi_plan.planned_approve or 0, 1) if kpi_plan else '',
+                    round(safe_div(offer.lead_container.leads_approved_count,
+                                   offer.lead_container.leads_non_trash_count) * 100, 1),
+                    round(offer.recommended_approve.value or 0, 1) if offer.recommended_approve else '',
+                    round(kpi_plan.planned_buyout or 0, 1) if kpi_plan else '',
+                    round(safe_div(offer.lead_container.leads_buyout_count,
+                                   offer.lead_container.leads_approved_count) * 100, 1),
+                    round(offer.recommended_buyout.value or 0, 1) if offer.recommended_buyout else '',
+                    round(offer.recommended_efficiency.value or 0, 1) if offer.recommended_efficiency else '',
+                    offer.recommended_confirmation_price.value if offer.recommended_confirmation_price else '',
+                    '✅' if any([offer.kpi_eff_need_correction, offer.kpi_app_need_correction,
+                                offer.kpi_buyout_need_correction]) else '❌',
+                    offer.kpi_eff_need_correction_str or offer.kpi_app_need_correction_str or offer.kpi_buyout_need_correction_str
+                ])
+
+        return rows
