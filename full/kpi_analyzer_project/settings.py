@@ -68,13 +68,13 @@ DATABASES = {
         },
     },
     'itrade': {
-        'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'itrade',
-        'USER': 'itr_assistant',
-        'PASSWORD': 'D4Ht3Ry3i7VzjgcJ',
-        'HOST': '2.58.67.166',
-        'PORT': '3308',
-        'OPTIONS': {
+        'ENGINE': 1111
+        'NAME': 11111
+        'USER': 11111
+        'PASSWORD': 111111
+        'HOST': 111111
+        'PORT':111111
+        'OPTIONS': 11111
             'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
             'charset': 'utf8mb4',
         },
