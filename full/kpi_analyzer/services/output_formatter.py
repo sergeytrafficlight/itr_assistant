@@ -106,6 +106,7 @@ class KPIOutputFormatter:
             group_start = current_row
             cat_data = {
                 'type': 'category',
+                'key': cat.key,
                 'description': cat.description,
                 'kpi_stat': {
                     'calls_group_effective_count': cat.kpi_stat.calls_group_effective_count,
@@ -123,36 +124,14 @@ class KPIOutputFormatter:
                 'approve_rate_plan': cat.approve_rate_plan,
                 'buyout_percent_fact': cat.buyout_percent_fact,
                 'offers': [],
-                'operators': [
-                    {
-                        'type': 'operator',
-                        'key': op.key,
-                        'description': op.key,
-                        'kpi_stat': {
-                            'calls_group_effective_count': op.kpi_stat.calls_group_effective_count,
-                            'leads_effective_count': op.kpi_stat.leads_effective_count,
-                            'effective_percent': op.kpi_stat.effective_percent,
-                            'effective_rate': op.kpi_stat.effective_rate,
-                        }
-                    } for op in cat.operator.values()
-                ],
-                'affiliates': [
-                    {
-                        'type': 'affiliate',
-                        'key': aff.key,
-                        'description': f"Веб #{aff.key}",
-                        'kpi_stat': {
-                            'calls_group_effective_count': aff.kpi_stat.calls_group_effective_count,
-                            'leads_effective_count': aff.kpi_stat.leads_effective_count,
-                            'effective_percent': aff.kpi_stat.effective_percent,
-                            'effective_rate': aff.kpi_stat.effective_rate,
-                        }
-                    } for aff in cat.aff.values()
-                ],
+                'operators': [],
+                'affiliates': []
             }
 
+            # Добавляем офферы
             for offer in cat.offer.values():
-                if not (offer.kpi_stat.calls_group_effective_count >= 5 or getattr(offer.lead_container, 'leads_non_trash_count', 0) >= 5):
+                if not (offer.kpi_stat.calls_group_effective_count >= 5 or getattr(offer.lead_container,
+                                                                                   'leads_non_trash_count', 0) >= 5):
                     continue
 
                 kpi_plan = offer.kpi_current_plan
@@ -176,9 +155,12 @@ class KPIOutputFormatter:
                         'planned_approve': kpi_plan.planned_approve if kpi_plan else None,
                         'planned_buyout': kpi_plan.planned_buyout if kpi_plan else None,
                         'confirmation_price': kpi_plan.confirmation_price if kpi_plan else None,
-                        'operator_efficiency_update_date': getattr(kpi_plan, 'operator_efficiency_update_date', None) if kpi_plan else None,
-                        'planned_approve_update_date': getattr(kpi_plan, 'planned_approve_update_date', None) if kpi_plan else None,
-                        'planned_buyout_update_date': getattr(kpi_plan, 'planned_buyout_update_date', None) if kpi_plan else None,
+                        'operator_efficiency_update_date': getattr(kpi_plan, 'operator_efficiency_update_date',
+                                                                   None) if kpi_plan else None,
+                        'planned_approve_update_date': getattr(kpi_plan, 'planned_approve_update_date',
+                                                               None) if kpi_plan else None,
+                        'planned_buyout_update_date': getattr(kpi_plan, 'planned_buyout_update_date',
+                                                              None) if kpi_plan else None,
                     } if kpi_plan else None,
                     'recommended_efficiency': offer.recommended_efficiency.value if offer.recommended_efficiency else None,
                     'recommended_approve': offer.recommended_approve.value if offer.recommended_approve else None,
@@ -190,14 +172,56 @@ class KPIOutputFormatter:
                     'kpi_confirmation_price_need_correction': offer.kpi_confirmation_price_need_correction_str,
                 }
                 cat_data['offers'].append(offer_data)
-                current_row += 1  # каждый оффер — +1 строка
+
+            # Добавляем операторов - ИСПРАВЛЕНО: используем description как имя оператора
+            for operator in cat.operator.values():
+                operator_data = {
+                    'type': 'operator',
+                    'key': operator.key,
+                    'description': operator.description,  # Используем description вместо key для отображения имени
+                    'kpi_stat': {
+                        'calls_group_effective_count': operator.kpi_stat.calls_group_effective_count,
+                        'leads_effective_count': operator.kpi_stat.leads_effective_count,
+                        'effective_percent': operator.kpi_stat.effective_percent,
+                        'effective_rate': operator.kpi_stat.effective_rate,
+                    },
+                    'lead_container': {
+                        'leads_non_trash_count': getattr(operator.lead_container, 'leads_non_trash_count', 0),
+                        'leads_approved_count': getattr(operator.lead_container, 'leads_approved_count', 0),
+                        'leads_buyout_count': getattr(operator.lead_container, 'leads_buyout_count', 0),
+                    }
+                }
+                cat_data['operators'].append(operator_data)
+
+            # Добавляем вебмастеров - ИСПРАВЛЕНО: используем description как имя вебмастера
+            for affiliate in cat.aff.values():
+                affiliate_data = {
+                    'type': 'affiliate',
+                    'key': affiliate.key,
+                    'description': affiliate.description,  # Используем description вместо форматированной строки
+                    'kpi_stat': {
+                        'calls_group_effective_count': affiliate.kpi_stat.calls_group_effective_count,
+                        'leads_effective_count': affiliate.kpi_stat.leads_effective_count,
+                        'effective_percent': affiliate.kpi_stat.effective_percent,
+                        'effective_rate': affiliate.kpi_stat.effective_rate,
+                    },
+                    'lead_container': {
+                        'leads_non_trash_count': getattr(affiliate.lead_container, 'leads_non_trash_count', 0),
+                        'leads_approved_count': getattr(affiliate.lead_container, 'leads_approved_count', 0),
+                        'leads_buyout_count': getattr(affiliate.lead_container, 'leads_buyout_count', 0),
+                    }
+                }
+                cat_data['affiliates'].append(affiliate_data)
 
             data.append(cat_data)
             current_row += 1  # категория — 1 строка
 
-            if group_rows == 'Да' and len(cat_data['offers']) > 0:
-                groups.append({'start': group_start, 'end': current_row - 1})
+            # Подсчитываем общее количество строк для группировки
+            total_rows_in_category = len(cat_data['offers']) + len(cat_data['operators']) + len(cat_data['affiliates'])
+            if group_rows == 'Да' and total_rows_in_category > 0:
+                groups.append({'start': group_start, 'end': group_start + total_rows_in_category})
 
+            # Добавляем рекомендации
             if getattr(cat, 'recommended_efficiency', None) and cat.recommended_efficiency.value is not None:
                 recommendations.append({
                     'type': 'efficiency',

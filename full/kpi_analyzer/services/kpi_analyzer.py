@@ -153,7 +153,7 @@ class CategoryItem:
     def push_lead(self, lead_data: Dict, sql_data: Dict):
         offer_id = lead_data.get('offer_id')
         aff_id = lead_data.get('aff_id')
-        operator_name = lead_data.get('lv_username', 'No operator')
+        operator_name = lead_data.get('lv_operator', 'No operator')
 
         if str(offer_id).isdigit():
             key = str(offer_id)
@@ -164,7 +164,8 @@ class CategoryItem:
         if str(aff_id).isdigit():
             key = str(aff_id)
             if key not in self.aff:
-                self.aff[key] = CommonItem(key, f"Web #{key}")
+                aff_name = lead_data.get('aff_name', f"Web #{key}")
+                self.aff[key] = CommonItem(key, aff_name)
             self.aff[key].push_lead(sql_data, offer_id=int(offer_id))
 
         if operator_name:
