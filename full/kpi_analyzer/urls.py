@@ -16,6 +16,7 @@ router.register(r'affiliates', views.AffiliateViewSet)
 
 
 router.register(r'kpi', views.KPIAdvancedAnalysisViewSet, basename='kpi')
+router.register(r'kpi-analysis', views.KPIAdvancedAnalysisViewSet, basename='kpi-analysis')
 
 router.register(r'kpi-data', views.KpiDataViewSet)
 

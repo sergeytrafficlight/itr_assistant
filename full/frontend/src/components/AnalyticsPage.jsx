@@ -3,6 +3,7 @@ import axios from 'axios'
 import { AgGridReact } from 'ag-grid-react'
 import 'ag-grid-community/styles/ag-grid.css'
 import 'ag-grid-community/styles/ag-theme-quartz.css'
+import { useNavigate } from 'react-router-dom'
 import './AnalyticsPage.css'
 
 const AnalyticsPage = () => {
@@ -27,6 +28,7 @@ const AnalyticsPage = () => {
   const cancelToken = useRef(null)
   const firstRender = useRef(true)
   const filterDebounce = useRef(null)
+  const navigate = useNavigate()
 
   // === ЗАГРУЗКА КАТЕГОРИЙ ===
   const loadCategories = async () => {
@@ -242,32 +244,59 @@ const AnalyticsPage = () => {
       <div className="filters-section">
         <h3>Фильтры</h3>
         <div className="filter-row">
-          <input type="date" value={filters.date_from} onChange={e => setFilters({...filters, date_from: e.target.value})} />
-          <input type="date" value={filters.date_to} onChange={e => setFilters({...filters, date_to: e.target.value})} />
-          <select value={filters.category} onChange={e => setFilters({...filters, category: e.target.value})}>
-            <option value="">Все категории</option>
-            {categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
-          </select>
-          <select value={filters.output} onChange={e => setFilters({...filters, output: e.target.value})}>
-            <option value="Все">Все</option>
-            <option value="Есть активность">Активные</option>
-          </select>
+          <div className="filter-group">
+            <label>Дата с:</label>
+            <input type="date" value={filters.date_from} onChange={e => setFilters({...filters, date_from: e.target.value})} />
+          </div>
+          <div className="filter-group">
+            <label>Дата по:</label>
+            <input type="date" value={filters.date_to} onChange={e => setFilters({...filters, date_to: e.target.value})} />
+          </div>
+          <div className="filter-group">
+            <label>Категория:</label>
+            <select value={filters.category} onChange={e => setFilters({...filters, category: e.target.value})}>
+              <option value="">Все категории</option>
+              {categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+            </select>
+          </div>
+          <div className="filter-group">
+            <label>Вывод:</label>
+            <select value={filters.output} onChange={e => setFilters({...filters, output: e.target.value})}>
+              <option value="Все">Все</option>
+              <option value="Есть активность">Активные</option>
+            </select>
+          </div>
         </div>
         <div className="filter-row">
-          <select value={filters.group_rows} onChange={e => setFilters({...filters, group_rows: e.target.value})}>
-            <option value="Нет">Без группировки</option>
-            <option value="Да">С группировкой</option>
-          </select>
-          <input type="text" placeholder="Advertiser" value={filters.advertiser} onChange={e => setFilters({...filters, advertiser: e.target.value.toLowerCase()})} />
-          <input type="text" placeholder="Оператор" value={filters.operator_name} onChange={e => setFilters({...filters, operator_name: e.target.value.toLowerCase()})} />
-          <input type="text" placeholder="ID Оффера" value={filters.offer_id} onChange={e => setFilters({...filters, offer_id: e.target.value})} />
+          <div className="filter-group">
+            <label>Группировка:</label>
+            <select value={filters.group_rows} onChange={e => setFilters({...filters, group_rows: e.target.value})}>
+              <option value="Нет">Без группировки</option>
+              <option value="Да">С группировкой</option>
+            </select>
+          </div>
+          <div className="filter-group">
+            <label>Advertiser:</label>
+            <input type="text" placeholder="Advertiser" value={filters.advertiser} onChange={e => setFilters({...filters, advertiser: e.target.value.toLowerCase()})} />
+          </div>
+          <div className="filter-group">
+            <label>Оператор:</label>
+            <input type="text" placeholder="Оператор" value={filters.operator_name} onChange={e => setFilters({...filters, operator_name: e.target.value.toLowerCase()})} />
+          </div>
+          <div className="filter-group">
+            <label>ID Оффера:</label>
+            <input type="text" placeholder="ID Оффера" value={filters.offer_id} onChange={e => setFilters({...filters, offer_id: e.target.value})} />
+          </div>
         </div>
         <div className="action-buttons">
           <button onClick={loadAdvancedAnalysis} disabled={loading} className="btn primary">
-            {loading ? 'Загрузка...' : 'Анализ'}
+            {loading ? '🔄 Загрузка...' : '📊 Анализ'}
           </button>
-          <button onClick={exportToCSV} className="btn secondary">CSV</button>
-          <button onClick={resetFilters} className="btn secondary">Сброс</button>
+          <button onClick={exportToCSV} className="btn secondary">📥 CSV</button>
+          <button onClick={() => navigate('/full-data')} className="btn secondary">
+            📋 Полные данные
+          </button>
+          <button onClick={resetFilters} className="btn secondary">🔄 Сброс</button>
         </div>
       </div>
 
@@ -275,12 +304,20 @@ const AnalyticsPage = () => {
 
       {recommendations.length > 0 && (
         <div className="recommendations-section">
-          <h3>Рекомендации</h3>
+          <h3>💡 Рекомендации</h3>
           <div className="recommendations-grid">
             {recommendations.map((rec, i) => (
               <div key={i} className="recommendation-card">
-                <strong>{rec.category}</strong>: {rec.type === 'efficiency' ? 'Эфф.' : 'Аппрув'} {rec.current}% → <span style={{color: 'green'}}>{rec.recommended}%</span>
-                {rec.comment && <em> ({rec.comment})</em>}
+                <div className="rec-header">
+                  <span className="rec-type">{rec.type === 'efficiency' ? 'Эффективность' : 'Аппрув'}</span>
+                  <span className="rec-category">{rec.category}</span>
+                </div>
+                <div className="rec-values">
+                  <span className="current">{rec.current}%</span>
+                  <span className="arrow">→</span>
+                  <span className="recommended">{rec.recommended}%</span>
+                </div>
+                {rec.comment && <div className="rec-comment">{rec.comment}</div>}
               </div>
             ))}
           </div>
@@ -288,11 +325,11 @@ const AnalyticsPage = () => {
       )}
 
       <div className="table-section">
-        <h3>Данные ({getRowData().length} строк)</h3>
+        <h3>📈 Данные ({getRowData().length} строк)</h3>
         {loading ? (
-          <div className="loading-indicator">Загрузка...</div>
+          <div className="loading-indicator">Загрузка данных...</div>
         ) : getRowData().length === 0 ? (
-          <div className="no-data-message">Нет данных</div>
+          <div className="no-data-message">Нет данных для отображения</div>
         ) : (
           <div className="ag-theme-quartz" style={{ height: 600, width: '100%' }}>
             <AgGridReact

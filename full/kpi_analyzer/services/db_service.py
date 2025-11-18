@@ -186,7 +186,6 @@ class DBService:
         lv_ops = [op.lower() for op in filters.get('lv_op', [])]
         aff_ids = filters.get('aff_id', [])
 
-        # ОПТИМИЗИРОВАННЫЙ ЗАПРОС - полная логика сохранена
         query = """
         SELECT
             partners_atscallevent.id as call_eff_id,
@@ -223,11 +222,10 @@ class DBService:
         AND po.id IS NOT NULL
         AND lv_op.username IS NOT NULL
         AND group_offer.name NOT IN ({})
-        AND partners_atscallevent.calldate >= %s  -- ИЗМЕНЕНИЕ: используем calldate без DATE_ADD
-        AND partners_atscallevent.calldate < %s   -- ИЗМЕНЕНИЕ: используем calldate без DATE_ADD
+        AND partners_atscallevent.calldate >= %s
+        AND partners_atscallevent.calldate < %s
         """.format(",".join(["%s"] * len(DBService.EXCLUDED_CATEGORIES)))
 
-        # ИСПРАВЛЕНИЕ: убираем .replace(' ', 'T')
         params = DBService.EXCLUDED_CATEGORIES + [date_from, date_to]
 
         if categories:
@@ -254,8 +252,6 @@ class DBService:
             placeholders, aff_params = DBService._prepare_in_values(aff_ids)
             query += f" AND pt.webmaster_id IN {placeholders}"
             params.extend(aff_params)
-
-        logger.info(f"Оптимизированный запрос звонков за период: {date_from} - {date_to}")
         return DBService._execute_query(query, params)
 
     @staticmethod
@@ -273,7 +269,6 @@ class DBService:
         lv_ops = [op.lower() for op in filters.get('lv_op', [])]
         aff_ids = filters.get('aff_id', [])
 
-        # ИСПРАВЛЕНО: полное соответствие эталону
         query = """
         SELECT
             crm_leads_crmlead.id as call_eff_crm_lead_id,
@@ -302,8 +297,8 @@ class DBService:
         AND offer.id IS NOT NULL
         AND lv_op.username IS NOT NULL
         AND group_offer.name NOT IN ({})
-        AND DATE_ADD(lv.approved_at, INTERVAL 3 HOUR) >= %s
-        AND DATE_ADD(lv.approved_at, INTERVAL 3 HOUR) < %s
+        AND lv.approved_at >= DATE_SUB(%s, INTERVAL 3 HOUR)  -- ОПТИМИЗАЦИЯ: используем индекс approved_at
+        AND lv.approved_at < DATE_SUB(%s, INTERVAL 3 HOUR)   -- убираем DATE_ADD из условия
         """.format(",".join(["%s"] * len(DBService.EXCLUDED_CATEGORIES)))
 
         params = DBService.EXCLUDED_CATEGORIES + [date_from, date_to]
@@ -333,9 +328,9 @@ class DBService:
             query += f" AND tl_lead.webmaster_id IN {placeholders}"
             params.extend(aff_params)
 
-        logger.info(f"Запрос лидов за период: {date_from} - {date_to}")
-        return DBService._execute_query(query, params)
+        query += " ORDER BY lv.approved_at ASC"
 
+        return DBService._execute_query(query, params)
     @staticmethod
     def get_leads_container(filters: Dict) -> List[Dict]:
         date_from = DBService._to_utc(filters.get('date_from'), "00:00:00")

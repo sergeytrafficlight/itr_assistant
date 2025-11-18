@@ -50,8 +50,13 @@ class CommonItem:
         self.lead_container = SimpleNamespace(
             leads_non_trash_count=0,
             leads_approved_count=0,
-            leads_buyout_count=0
+            leads_buyout_count=0,
+            leads_trash_count=0,
+            leads_total_count=0
         )
+        self.approve_percent_fact: Optional[float] = None
+        self.buyout_percent_fact: Optional[float] = None
+        self.trash_percent: Optional[float] = None
 
     def push_lead(self, sql_data: Dict, offer_id: int = None):
         push_lead_to_engine(sql_data, offer_id, self.kpi_stat.stat)
@@ -68,25 +73,44 @@ class CommonItem:
         self.kpi_stat.effective_rate = self.kpi_stat.stat.effective_rate
         self.kpi_stat.expecting_effective_rate = self.kpi_stat.stat.expecting_effective_rate
 
+        if self.lead_container.leads_non_trash_count > 0:
+            self.approve_percent_fact = safe_div(
+                self.lead_container.leads_approved_count,
+                self.lead_container.leads_non_trash_count
+            ) * 100
+
+        if self.lead_container.leads_approved_count > 0:
+            self.buyout_percent_fact = safe_div(
+                self.lead_container.leads_buyout_count,
+                self.lead_container.leads_approved_count
+            ) * 100
+
+        if self.lead_container.leads_total_count > 0:
+            self.trash_percent = safe_div(
+                self.lead_container.leads_trash_count,
+                self.lead_container.leads_total_count
+            ) * 100
+
         if self.kpi_current_plan is not None:
             self.expecting_approve_leads = safe_float(
                 self.lead_container.leads_non_trash_count * self.kpi_current_plan.planned_approve)
             self.expecting_buyout_leads = safe_float(
                 self.lead_container.leads_approved_count * self.kpi_current_plan.planned_buyout)
+            if self.kpi_current_plan is None:
+                self.set_kpi_eff_need_correction("KPI not found")
+            elif self.recommended_efficiency.value is None:
+                self.set_kpi_eff_need_correction("Recommendation not generated")
+            else:
+                plan_efficiency = safe_float(self.kpi_current_plan.operator_efficiency)
+                rec_efficiency = safe_float(self.recommended_efficiency.value)
+                if abs(rec_efficiency - plan_efficiency) > 0.2:
+                    self.set_kpi_eff_need_correction(
+                        f"Diff >0.2: rec={rec_efficiency:.3f}, plan={plan_efficiency:.3f}"
+                    )
+                elif plan_efficiency <= 0:
+                    self.set_kpi_eff_need_correction(f"KPI not set: {plan_efficiency}")
 
-        if self.kpi_current_plan is None:
-            self.set_kpi_eff_need_correction("KPI not found")
-        elif self.recommended_efficiency.value is None:
-            self.set_kpi_eff_need_correction("Recommendation not generated")
-        else:
-            plan_efficiency = safe_float(self.kpi_current_plan.operator_efficiency)
-            rec_efficiency = safe_float(self.recommended_efficiency.value)
-            if abs(rec_efficiency - plan_efficiency) > 0.2:
-                self.set_kpi_eff_need_correction(
-                    f"Diff >0.2: rec={rec_efficiency:.3f}, plan={plan_efficiency:.3f}"
-                )
-            elif plan_efficiency <= 0:
-                self.set_kpi_eff_need_correction(f"KPI not set: {plan_efficiency}")
+
 
     def set_kpi_eff_need_correction(self, comment: str):
         self.kpi_eff_need_correction = True
@@ -125,6 +149,7 @@ class CategoryItem:
         self.recommended_buyout: Recommendation = Recommendation(None, "")
         self.recommended_confirmation_price: Recommendation = Recommendation(None, "")
 
+
         self.approve_percent_fact: Optional[float] = None
         self.buyout_percent_fact: Optional[float] = None
         self.max_confirmation_price: float = 0
@@ -161,38 +186,70 @@ class CategoryItem:
                 self.offer[key] = OfferItem(key, lead_data.get('offer_name', ''))
             self.offer[key].push_lead(sql_data, offer_id=int(offer_id))
 
+
+            self.offer[key].lead_container.leads_total_count += 1
+            if not sql_data.get('lead_container_is_trash', False):
+                self.offer[key].lead_container.leads_non_trash_count += 1
+                if sql_data.get('lead_container_approved_at'):
+                    self.offer[key].lead_container.leads_approved_count += 1
+                    if sql_data.get('lead_container_buyout_at'):
+                        self.offer[key].lead_container.leads_buyout_count += 1
+                if sql_data.get('lead_container_is_trash', False):
+                    self.offer[key].lead_container.leads_trash_count += 1
+
         if str(aff_id).isdigit():
             key = str(aff_id)
             if key not in self.aff:
-                aff_name = lead_data.get('aff_name', f"Web #{key}")
-                self.aff[key] = CommonItem(key, aff_name)
+                self.aff[key] = CommonItem(key, f"Web #{key}")
             self.aff[key].push_lead(sql_data, offer_id=int(offer_id))
+
+
+            self.aff[key].lead_container.leads_total_count += 1
+            if not sql_data.get('lead_container_is_trash', False):
+                self.aff[key].lead_container.leads_non_trash_count += 1
+                if sql_data.get('lead_container_approved_at'):
+                    self.aff[key].lead_container.leads_approved_count += 1
+                    if sql_data.get('lead_container_buyout_at'):
+                        self.aff[key].lead_container.leads_buyout_count += 1
+                if sql_data.get('lead_container_is_trash', False):
+                    self.aff[key].lead_container.leads_trash_count += 1
 
         if operator_name:
             if operator_name not in self.operator:
                 self.operator[operator_name] = CommonItem(operator_name, operator_name)
             self.operator[operator_name].push_lead(sql_data, offer_id=int(offer_id))
 
+            self.operator[operator_name].lead_container.leads_total_count += 1
+            if not sql_data.get('lead_container_is_trash', False):
+                self.operator[operator_name].lead_container.leads_non_trash_count += 1
+                if sql_data.get('lead_container_approved_at'):
+                    self.operator[operator_name].lead_container.leads_approved_count += 1
+                    if sql_data.get('lead_container_buyout_at'):
+                        self.operator[operator_name].lead_container.leads_buyout_count += 1
+                if sql_data.get('lead_container_is_trash', False):
+                    self.operator[operator_name].lead_container.leads_trash_count += 1
+
         push_lead_to_engine(sql_data, int(offer_id) if str(offer_id).isdigit() else None, self.kpi_stat.stat)
 
     def push_call(self, call_data: Dict, sql_data: Dict):
-        offer_id = call_data.get('call_eff_offer_id')
-        aff_id = call_data.get('call_eff_affiliate_id')
-        operator_name = call_data.get('lv_username', 'No operator')
+        offer_id = call_data.get('offer_id')
+        aff_id = call_data.get('aff_id')
+        operator_name = call_data.get('lv_operator', 'No operator')
 
-        if str(offer_id).isdigit():
+        if offer_id and str(offer_id).isdigit():
             key = str(offer_id)
             if key not in self.offer:
-                self.offer[key] = OfferItem(key, call_data.get('offer_name', ''))
+                offer_name = call_data.get('offer_name') or sql_data.get('offer_name', f'Offer #{key}')
+                self.offer[key] = OfferItem(key, offer_name)
             self.offer[key].push_call(sql_data)
 
-        if str(aff_id).isdigit():
+        if aff_id and str(aff_id).isdigit():
             key = str(aff_id)
             if key not in self.aff:
                 self.aff[key] = CommonItem(key, f"Web #{key}")
             self.aff[key].push_call(sql_data)
 
-        if operator_name:
+        if operator_name and operator_name != 'un_operator':
             if operator_name not in self.operator:
                 self.operator[operator_name] = CommonItem(operator_name, operator_name)
             self.operator[operator_name].push_call(sql_data)
@@ -200,6 +257,18 @@ class CategoryItem:
         push_call_to_engine(sql_data, self.kpi_stat.stat)
 
     def finalize(self, kpi_list: KpiList):
+
+        self._generate_recommendations()
+
+        for offer in self.offer.values():
+            offer.kpi_current_plan = kpi_list.find_kpi(None, str(offer.key), datetime.now().strftime('%Y-%m-%d'))
+            offer.recommended_efficiency = self.recommended_efficiency
+            offer.recommended_approve = self.recommended_approve
+            offer.recommended_buyout = self.recommended_buyout
+            offer.recommended_confirmation_price = self.recommended_confirmation_price
+            offer.finalize(kpi_list)
+            self._validate_offer_kpi(offer)
+
         for item in list(self.offer.values()) + list(self.aff.values()) + list(self.operator.values()):
             item.finalize(kpi_list)
 
@@ -346,6 +415,59 @@ class CategoryItem:
             offer.set_confirmation_price_need_correction(
                 f"Текущий чек подтверждения ({confirmation_price}) < Максимального в группе ({self.max_confirmation_price})")
 
+    def _generate_recommendations(self):
+        """Генерация рекомендаций для категории"""
+        if self.operator_sorted:
+            self.recommended_efficiency = self.recommendation_engine.get_recommended_efficiency(
+                self.operator_sorted,
+                self.operator_recommended.value if self.operator_recommended else None
+            )
+        else:
+            avg_efficiency = self.kpi_stat.effective_percent or 0
+            self.recommended_efficiency = Recommendation(
+                avg_efficiency,
+                "На основе средней эффективности по категории"
+            )
+
+        # Рекомендация по аппрувам
+        if self.lead_container.leads_non_trash_count > 10:
+            current_approve = self.approve_percent_fact or 0
+            recommended_approve = min(current_approve * 1.1, 95)
+            self.recommended_approve = Recommendation(
+                recommended_approve,
+                f"Текущий аппрув: {current_approve:.1f}%, рекомендуется: {recommended_approve:.1f}%"
+            )
+        else:
+            self.recommended_approve = Recommendation(
+                70,
+                "Недостаточно данных для анализа, установлено значение по умолчанию"
+            )
+
+        if self.lead_container.leads_approved_count > 5:
+            current_buyout = self.buyout_percent_fact or 0
+            recommended_buyout = min(current_buyout * 1.05, 80)
+            self.recommended_buyout = Recommendation(
+                recommended_buyout,
+                f"Текущий выкуп: {current_buyout:.1f}%, рекомендуется: {recommended_buyout:.1f}%"
+            )
+        else:
+            self.recommended_buyout = Recommendation(
+                50,
+                "Недостаточно данных для анализа, установлено значение по умолчанию"
+            )
+
+        # Рекомендация по чеку подтверждения
+        if self.max_confirmation_price > 0:
+            self.recommended_confirmation_price = Recommendation(
+                self.max_confirmation_price,
+                f"Максимальный чек подтверждения в категории: {self.max_confirmation_price}"
+            )
+        else:
+            self.recommended_confirmation_price = Recommendation(
+                1000,
+                "Чек не установлен, используется значение по умолчанию"
+            )
+
 
 class Stat:
     def __init__(self):
@@ -439,10 +561,11 @@ class Stat:
         if cat_name not in self.category:
             self.category[cat_name] = CategoryItem(cat_name, cat_name)
         call_data = {
-            'offer_id': sql_data.get('call_eff_offer_id'),
+            'offer_id': sql_data.get('call_eff_offer_id') or sql_data.get('offer_id'),
             'offer_name': sql_data.get('offer_name', ''),
             'aff_id': sql_data.get('call_eff_affiliate_id'),
-            'lv_operator': sql_data.get('lv_username', 'No operator')
+            'lv_operator': sql_data.get('lv_username', 'un_operator')
+
         }
         self.category[cat_name].push_call(call_data, sql_data)
 
