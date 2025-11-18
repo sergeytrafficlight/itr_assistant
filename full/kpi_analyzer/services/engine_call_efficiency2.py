@@ -101,7 +101,9 @@ class Lead:
         self.operator_id = r.get('call_eff_operator_id')
         self.is_salary_pay = True
         self.is_salary_not_pay_reason = ""
-        self.offer_id = r.get('offer_id')
+        self.offer_id =r.get('offer_id')
+        if not self.offer_id:
+            self.offer_id = r.get('call_eff_offer_id')
         if not self.offer_id:
             raise ValueError(f"Can't find offer id for lead crm id: {self.crm_lead_id}")
 
@@ -111,7 +113,7 @@ class Lead:
 
     def finalize(self, is_fake_approve_func):
         self.is_salary_not_pay_reason = is_fake_approve_func(self.__dict__)
-        self.is_salary_pay = not self.is_salary_not_pay_reason
+        self.is_salary_pay = (self.is_salary_not_pay_reason == "")
 
 
 class CallGroup:
@@ -155,7 +157,6 @@ class KpiList:
         if key not in l:
             l[key] = []
         items = l[key]
-        # Конвертируем даты для корректного сравнения
         current_period_date = self._normalize_date(kpi.period_date)
         if items:
             last_period_date = self._normalize_date(items[-1].period_date)
@@ -207,7 +208,6 @@ class KpiList:
         return None
 
     def find_kpi(self, affiliate_id: Optional[str], offer_id: str, period_date: str) -> Optional[Kpi]:
-        # Приводим period_date к строковому формату, если это необходимо
         if isinstance(period_date, (datetime, date)):
             period_date = period_date.strftime('%Y-%m-%d')
 
@@ -236,7 +236,6 @@ class KpiList:
         kpi = self.find_kpi(affiliate_id, offer_id, period_date)
         if kpi is None:
             return None
-        # ТОЧНОЕ СООТВЕТСТВИЕ ЭТАЛОНУ: проверка (kpi.affiliate_id == affiliate_id)
         if (kpi.operator_efficiency is None or kpi.operator_efficiency < self.min_eff) and (
                 kpi.affiliate_id == affiliate_id):
             return self.find_kpi(None, offer_id, period_date)
@@ -301,7 +300,6 @@ class Stat:
                 self.calls_group_with_calculation += 1
                 kpi = kpi_list.find_kpi_operator_eff(group.affiliate_id, str(group.offer_id), group.calldate_str)
 
-                # ТОЧНОЕ СООТВЕТСТВИЕ ЭТАЛОННОЙ ЛОГИКЕ:
                 if kpi is None:
                     self.expecting_approved_leads = None
                     self.kpi_calculation_errors += f"Can't find KPI for offer: {group.offer_id} affiliate_id: {group.affiliate_id}\n"
@@ -309,8 +307,8 @@ class Stat:
                     self.expecting_approved_leads = None
                     self.kpi_calculation_errors += f"Wrong KPI for offer: {group.offer_id} affiliate_id: {group.affiliate_id} efficiency: {kpi.operator_efficiency} (< {KpiList.min_eff})\n"
                 elif self.expecting_approved_leads is not None:
-                    self.expecting_approved_leads += 1 / kpi.operator_efficiency
-
+                    efficiency_value = float(kpi.operator_efficiency)
+                    self.expecting_approved_leads += 1.0 / efficiency_value
         for lead in self.leads.values():
             lead.finalize(is_fake_approve_func)
             if lead.is_salary_pay:

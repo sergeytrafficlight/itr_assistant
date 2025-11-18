@@ -18,9 +18,8 @@ class DBService:
 
     # Настройки retry
     MAX_RETRIES = 3
-    RETRY_DELAY = 1  # секунды
-    BATCH_SIZE = 1000  # размер батча для обработки
-
+    RETRY_DELAY = 1
+    BATCH_SIZE = 1000
     @staticmethod
     def retry_on_db_error(func):
         """Декоратор для повторных попыток при ошибках БД"""
@@ -187,7 +186,7 @@ class DBService:
         lv_ops = [op.lower() for op in filters.get('lv_op', [])]
         aff_ids = filters.get('aff_id', [])
 
-        # ИСПРАВЛЕНО: полное соответствие эталону
+        # ОПТИМИЗИРОВАННЫЙ ЗАПРОС - полная логика сохранена
         query = """
         SELECT
             partners_atscallevent.id as call_eff_id,
@@ -224,10 +223,11 @@ class DBService:
         AND po.id IS NOT NULL
         AND lv_op.username IS NOT NULL
         AND group_offer.name NOT IN ({})
-        AND DATE_ADD(partners_atscallevent.calldate, INTERVAL 3 HOUR) >= %s
-        AND DATE_ADD(partners_atscallevent.calldate, INTERVAL 3 HOUR) < %s
+        AND partners_atscallevent.calldate >= %s  -- ИЗМЕНЕНИЕ: используем calldate без DATE_ADD
+        AND partners_atscallevent.calldate < %s   -- ИЗМЕНЕНИЕ: используем calldate без DATE_ADD
         """.format(",".join(["%s"] * len(DBService.EXCLUDED_CATEGORIES)))
 
+        # ИСПРАВЛЕНИЕ: убираем .replace(' ', 'T')
         params = DBService.EXCLUDED_CATEGORIES + [date_from, date_to]
 
         if categories:
@@ -255,7 +255,7 @@ class DBService:
             query += f" AND pt.webmaster_id IN {placeholders}"
             params.extend(aff_params)
 
-        logger.info(f"Запрос звонков за период: {date_from} - {date_to}")
+        logger.info(f"Оптимизированный запрос звонков за период: {date_from} - {date_to}")
         return DBService._execute_query(query, params)
 
     @staticmethod

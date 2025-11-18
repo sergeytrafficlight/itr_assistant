@@ -3,6 +3,14 @@ from datetime import datetime
 import logging
 
 logger = logging.getLogger(__name__)
+def safe_float(value):
+    """Безопасно конвертирует значение в float"""
+    if value is None:
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
 def safe_div(numerator, denominator, default=0.0):
     """Безопасное деление с обработкой всех ошибок"""
