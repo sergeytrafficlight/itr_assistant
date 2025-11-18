@@ -69,6 +69,10 @@ class CommonItem:
         self.kpi_stat.effective_rate = self.kpi_stat.stat.effective_rate
         self.kpi_stat.expecting_effective_rate = self.kpi_stat.stat.expecting_effective_rate
 
+        if self.kpi_current_plan is not None:
+            self.expecting_approve_leads = self.lead_container.leads_non_trash_count * self.kpi_current_plan.planned_approve
+            self.expecting_buyout_leads = self.lead_container.leads_approved_count * self.kpi_current_plan.planned_buyout
+
         if self.kpi_current_plan is None:
             self.set_kpi_eff_need_correction("KPI not found")
         elif self.recommended_efficiency.value is None:
@@ -257,21 +261,22 @@ class CategoryItem:
             self.expecting_approve_leads = None
             self.expecting_buyout_leads = None
 
-        # ЭТАЛОННАЯ ЛОГИКА РАСЧЕТА recommended_approve
+
         fact_approve = self.approve_percent_fact or 0
 
         if self.expecting_approve_leads is not None and self.expecting_approve_leads > 0:
             if self.kpi_stat.effective_percent and self.kpi_stat.effective_percent > 0:
-                # ТОЧНАЯ ФОРМУЛА ИЗ ЭТАЛОНА
-                perhaps_app_count = ((self.kpi_stat.leads_effective_count / (self.kpi_stat.effective_percent / 100))
-                                     - self.kpi_stat.leads_effective_count) * 0.3 + self.kpi_stat.leads_effective_count
-            else:
-                perhaps_app_count = self.kpi_stat.leads_effective_count
 
-            rec_approve = safe_div(perhaps_app_count, self.kpi_stat.leads_effective_count) * 100
+                perhaps_app_count = ((self.lead_container.leads_approved_count / (
+                            self.kpi_stat.effective_percent / 100))
+                                     - self.lead_container.leads_approved_count) * 0.3 + self.lead_container.leads_approved_count
+            else:
+                perhaps_app_count = self.lead_container.leads_approved_count
+
+            rec_approve = safe_div(perhaps_app_count, self.lead_container.leads_non_trash_count) * 100
             comment = f"Текущая эффективность: {self.kpi_stat.effective_percent:.1f}%, коррекция -> вероятное к-во аппрувов: {perhaps_app_count:.0f}"
 
-            # КОРРЕКЦИЯ КАК В ЭТАЛОНЕ
+            # Коррекция как в эталоне
             if rec_approve < fact_approve:
                 comment += f"\nФактический аппрув ({fact_approve:.1f}) выше рекоммендуемого ({rec_approve:.1f}), коррекция рекоммендации до фактического аппрува"
                 rec_approve = fact_approve
@@ -285,13 +290,10 @@ class CategoryItem:
             comment = "Нет данных для расчета ожидаемых аппрувов"
             self.recommended_approve = Recommendation(rec_approve, comment)
 
-        # ЛОГИКА recommended_buyout ИЗ ЭТАЛОНА
         self.recommended_buyout = Recommendation(
             self.buyout_percent_fact * 1.02 if self.buyout_percent_fact else 0,
             f"Текущий выкуп: {self.buyout_percent_fact or 0:.1f}%, поднимаем на 2%"
         )
-
-        # ЛОГИКА recommended_confirmation_price ИЗ ЭТАЛОНА
         self.recommended_confirmation_price = Recommendation(
             self.max_confirmation_price,
             "Максимальный чек в группе"

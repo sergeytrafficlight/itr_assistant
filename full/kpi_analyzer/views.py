@@ -149,6 +149,57 @@ class KPIAdvancedAnalysisViewSet(viewsets.ViewSet):
             analyzer = OpAnalyzeKPI()
             stat = analyzer.run_analysis(filter_params)
 
+            # ОТЛАДОЧНАЯ ИНФОРМАЦИЯ
+            logger.info(f"=== ОТЛАДОЧНАЯ ИНФОРМАЦИЯ ===")
+            logger.info(f"Тип stat объекта: {type(stat)}")
+            logger.info(f"Атрибуты stat: {dir(stat)}")
+            logger.info(f"Количество категорий: {len(stat.category)}")
+
+
+            if hasattr(stat, 'category'):
+                logger.info(f"stat.category существует, количество: {len(stat.category)}")
+            else:
+                logger.info("stat.kpi_stat не существует")
+                return Response({'success': False, 'error': 'Invalid stat structure'}, status=400)
+
+            total_leads = 0
+            total_calls = 0
+            category_count = 0
+
+            for cat_name, category in stat.category.items():
+                category_count += 1
+                logger.info(f"--- Категория #{category_count}: '{cat_name}' ---")
+                logger.info(f"Тип категории: {type(category)}")
+                logger.info(f"Атрибуты категории: {dir(category)}")
+
+                if hasattr(category, 'kpi_stat'):
+                    logger.info(f"category.kpi_stat существует")
+                    if hasattr(category.kpi_stat, 'leads_effective_count'):
+                        cat_leads = category.kpi_stat.leads_effective_count
+                        total_leads += cat_leads
+                        logger.info(f"  leads_effective_count: {cat_leads}")
+                    else:
+                        logger.info("  leads_effective_count отсутствует")
+
+                    if hasattr(category.kpi_stat, 'calls_group_effective_count'):
+                        cat_calls = category.kpi_stat.calls_group_effective_count
+                        total_calls += cat_calls
+                        logger.info(f"  calls_group_effective_count: {cat_calls}")
+                    else:
+                        logger.info("  calls_group_effective_count отсутствует")
+                else:
+                    logger.info("  category.kpi_stat отсутствует")
+
+                # Проверяем наличие других возможных источников данных
+                if hasattr(category, 'lead_container'):
+                    logger.info(f"  lead_container: {category.lead_container}")
+
+            logger.info(f"=== ИТОГО ===")
+            logger.info(f"Всего категорий обработано: {category_count}")
+            logger.info(f"Общее количество leads: {total_leads}")
+            logger.info(f"Общее количество calls: {total_calls}")
+            logger.info(f"=== КОНЕЦ ОТЛАДОЧНОЙ ИНФОРМАЦИИ ===")
+
             formatter = KPIOutputFormatter()
             result_data = formatter.format_for_frontend(
                 stat,
@@ -156,6 +207,7 @@ class KPIAdvancedAnalysisViewSet(viewsets.ViewSet):
             )
 
             execution_time = round(time.time() - start_time, 2)
+
             response = {
                 'success': True,
                 'data': result_data['data'],
@@ -163,8 +215,8 @@ class KPIAdvancedAnalysisViewSet(viewsets.ViewSet):
                 'recommendations': result_data['recommendations'],
                 'performance': {
                     'total_seconds': execution_time,
-                    'leads_count': stat.leads_effective_count,  # Исправлено
-                    'calls_count': stat.calls_group_effective_count,  # Исправлено
+                    'leads_count': total_leads,
+                    'calls_count': total_calls,
                 }
             }
 

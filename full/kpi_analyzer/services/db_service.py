@@ -4,14 +4,45 @@ import time
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timedelta
 from decimal import Decimal
+from functools import wraps
+import math
 
 logger = logging.getLogger(__name__)
 
 
 class DBService:
     EXCLUDED_CATEGORIES = ['Архив', 'Входящая линия']
-    BAD_APPROVE_STATUS = ['отправить позже', 'отмен', 'предоплаты', '4+ дней', '4 день', '3 день', '2 день', '1 день', 'перезвон']
+    BAD_APPROVE_STATUS = ['отправить позже', 'отмен', 'предоплаты', '4+ дней', '4 день', '3 день', '2 день', '1 день',
+                          'перезвон']
     GOOD_APPROVE_STATUS_GROUP = ['accepted', 'shipped', 'paid', 'return']
+
+    # Настройки retry
+    MAX_RETRIES = 3
+    RETRY_DELAY = 1  # секунды
+    BATCH_SIZE = 1000  # размер батча для обработки
+
+    @staticmethod
+    def retry_on_db_error(func):
+        """Декоратор для повторных попыток при ошибках БД"""
+
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            last_exception = None
+            for attempt in range(DBService.MAX_RETRIES + 1):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    last_exception = e
+                    if attempt < DBService.MAX_RETRIES:
+                        wait_time = DBService.RETRY_DELAY * (2 ** attempt)  # экспоненциальная задержка
+                        logger.warning(f"Попытка {attempt + 1}/{DBService.MAX_RETRIES + 1} не удалась. "
+                                       f"Ошибка: {e}. Повтор через {wait_time}с")
+                        time.sleep(wait_time)
+                    else:
+                        logger.error(f"Все {DBService.MAX_RETRIES + 1} попыток не удались. Последняя ошибка: {e}")
+            raise last_exception
+
+        return wrapper
 
     @staticmethod
     def _prepare_in_values(values: List[Any]) -> Tuple[str, List[Any]]:
@@ -34,6 +65,7 @@ class DBService:
             return None
 
     @staticmethod
+    @retry_on_db_error
     def _execute_query(query: str, params: List[Any]) -> List[Dict]:
         try:
             start = time.time()
@@ -47,7 +79,33 @@ class DBService:
             return results
         except Exception as e:
             logger.error(f"Ошибка выполнения запроса: {e}")
+            raise  # Пробрасываем исключение для retry механизма
+
+    @staticmethod
+    def _process_in_batches(data: List[Dict], batch_size: int, process_func: callable) -> List[Dict]:
+        """Обрабатывает данные батчами"""
+        if not data:
             return []
+
+        results = []
+        total_batches = math.ceil(len(data) / batch_size)
+
+        for batch_num in range(total_batches):
+            start_idx = batch_num * batch_size
+            end_idx = start_idx + batch_size
+            batch = data[start_idx:end_idx]
+
+            logger.info(f"Обработка батча {batch_num + 1}/{total_batches}, размер: {len(batch)}")
+
+            try:
+                batch_results = process_func(batch)
+                results.extend(batch_results)
+            except Exception as e:
+                logger.error(f"Ошибка обработки батча {batch_num + 1}: {e}")
+                # Продолжаем обработку следующих батчей
+                continue
+
+        return results
 
     @staticmethod
     def get_kpi_plans_data(filters: Optional[Dict] = None) -> List[Dict]:
@@ -57,7 +115,25 @@ class DBService:
             offer_plan.period_date as call_eff_period_date,
             offer_plan.offer_id as call_eff_offer_id,
             aff.external_id as call_eff_affiliate_id,
-            offer_plan.operator_efficiency as call_eff_operator_efficiency
+            LEFT(DATE_ADD(offer_plan.updated_at, INTERVAL 3 HOUR), 10) as call_eff_plan_update_date,
+
+            offer_plan.confirmation_price as call_eff_confirmation_price,
+            offer_plan.buyout_price as call_eff_buyout_price,
+
+            offer_plan.operator_efficiency as call_eff_operator_efficiency,
+            LEFT(DATE_ADD(offer_plan.operator_efficiency_updated_at, INTERVAL 3 HOUR), 10) as call_eff_operator_efficiency_update_date,
+
+            offer_plan.planned_approve_from as call_eff_planned_approve,
+            LEFT(DATE_ADD(offer_plan.planned_approve_update_at, INTERVAL 3 HOUR), 10) as call_eff_approve_update_date,
+
+            offer_plan.planned_buyout_from as call_eff_planned_buyout,
+            LEFT(DATE_ADD(offer_plan.planned_buyout_update_at, INTERVAL 3 HOUR), 10) as call_eff_buyout_update_date,
+
+            offer_plan.confirmation_price as call_eff_confirmation_price,
+            LEFT(DATE_ADD(offer_plan.confirmation_price_updated_at, INTERVAL 3 HOUR), 10) as call_eff_confirmation_price_update_date,
+
+            offer_plan.buyout_price as call_eff_buyout_price,
+            LEFT(DATE_ADD(offer_plan.buyout_price_updated_at, INTERVAL 3 HOUR), 10) as call_eff_buyout_price_update_date
         FROM partners_tlofferplanneddataperiod AS offer_plan
         LEFT JOIN partners_affiliate aff ON aff.id = offer_plan.affiliate_id
         ORDER BY period_date ASC
@@ -69,27 +145,29 @@ class DBService:
         offer_ids = filters.get('offer_id', [])
         categories = filters.get('category', [])
 
+        # ИСПРАВЛЕНО: полное соответствие эталону
         query = """
         SELECT
-            po.id as id,
-            po.name as name,
-            go.name as category_name
-        FROM partners_offer po
-        LEFT JOIN partners_assignedoffer ao ON ao.offer_id = po.id
-        LEFT JOIN partners_groupoffer go ON ao.group_id = go.id
-        WHERE go.name NOT IN ({})
+            partners_offer.id as id,
+            partners_offer.name as name,
+            group_offer.name as category_name
+        FROM partners_offer
+        LEFT JOIN partners_assignedoffer assigned_offer ON assigned_offer.offer_id = partners_offer.id 
+        LEFT JOIN partners_groupoffer group_offer ON assigned_offer.group_id = group_offer.id 
+        WHERE 1=1
+        AND group_offer.name NOT IN ({})
         """.format(",".join(["%s"] * len(DBService.EXCLUDED_CATEGORIES)))
 
         params = DBService.EXCLUDED_CATEGORIES.copy()
 
         if categories:
             placeholders, cat_params = DBService._prepare_in_values(categories)
-            query += f" AND go.name IN {placeholders}"
+            query += f" AND group_offer.name IN {placeholders}"
             params.extend(cat_params)
 
         if offer_ids:
             placeholders, offer_params = DBService._prepare_in_values(offer_ids)
-            query += f" AND po.id IN {placeholders}"
+            query += f" AND partners_offer.id IN {placeholders}"
             params.extend(offer_params)
 
         return DBService._execute_query(query, params)
@@ -98,12 +176,18 @@ class DBService:
     def get_calls(filters: Dict) -> List[Dict]:
         date_from = DBService._to_utc(filters.get('date_from'), "00:00:00")
         date_to = DBService._to_utc(filters.get('date_to'), "23:59:59")
+
+        if not date_from or not date_to:
+            logger.error("Не указаны даты начала или окончания периода")
+            return []
+
         advertiser = [a.lower() for a in filters.get('advertiser', [])]
         offer_ids = filters.get('offer_id', [])
         categories = filters.get('category', [])
         lv_ops = [op.lower() for op in filters.get('lv_op', [])]
         aff_ids = filters.get('aff_id', [])
 
+        # ИСПРАВЛЕНО: полное соответствие эталону
         query = """
         SELECT
             partners_atscallevent.id as call_eff_id,
@@ -134,13 +218,14 @@ class DBService:
         LEFT JOIN partners_assignedoffer assigned_offer ON assigned_offer.offer_id = po.id
         LEFT JOIN partners_groupoffer group_offer ON assigned_offer.group_id = group_offer.id
         LEFT JOIN crm_call_oktelltask ON partners_atscallevent.oktell_task_id = crm_call_oktelltask.id
-        WHERE partners_atscallevent.billsec >= 30
-            AND ((ud.name LIKE '%%_НП_%%' OR ud.name LIKE '%%_СП_%%') OR (crm_call_oktelltask.type = 'new_sales'))
-            AND po.id IS NOT NULL
-            AND lv_op.username IS NOT NULL
-            AND group_offer.name NOT IN ({})
-            AND DATE_ADD(partners_atscallevent.calldate, INTERVAL 3 HOUR) >= %s
-            AND DATE_ADD(partners_atscallevent.calldate, INTERVAL 3 HOUR) < %s
+        WHERE 1=1
+        AND partners_atscallevent.billsec >= 30
+        AND ((ud.name LIKE '%%_НП_%%' OR ud.name LIKE '%%_СП_%%') OR (crm_call_oktelltask.type = 'new_sales'))
+        AND po.id IS NOT NULL
+        AND lv_op.username IS NOT NULL
+        AND group_offer.name NOT IN ({})
+        AND DATE_ADD(partners_atscallevent.calldate, INTERVAL 3 HOUR) >= %s
+        AND DATE_ADD(partners_atscallevent.calldate, INTERVAL 3 HOUR) < %s
         """.format(",".join(["%s"] * len(DBService.EXCLUDED_CATEGORIES)))
 
         params = DBService.EXCLUDED_CATEGORIES + [date_from, date_to]
@@ -170,6 +255,7 @@ class DBService:
             query += f" AND pt.webmaster_id IN {placeholders}"
             params.extend(aff_params)
 
+        logger.info(f"Запрос звонков за период: {date_from} - {date_to}")
         return DBService._execute_query(query, params)
 
     @staticmethod
@@ -177,6 +263,17 @@ class DBService:
         date_from = DBService._to_utc(filters.get('date_from'), "00:00:00")
         date_to = DBService._to_utc(filters.get('date_to'), "23:59:59")
 
+        if not date_from or not date_to:
+            logger.error("Не указаны даты начала или окончания периода")
+            return []
+
+        advertiser = [a.lower() for a in filters.get('advertiser', [])]
+        offer_ids = filters.get('offer_id', [])
+        categories = filters.get('category', [])
+        lv_ops = [op.lower() for op in filters.get('lv_op', [])]
+        aff_ids = filters.get('aff_id', [])
+
+        # ИСПРАВЛЕНО: полное соответствие эталону
         query = """
         SELECT
             crm_leads_crmlead.id as call_eff_crm_lead_id,
@@ -197,40 +294,75 @@ class DBService:
         LEFT JOIN users_user uu ON uu.id = pu.user_id
         LEFT JOIN partners_lvleadstatuses AS lv_status ON lv.leadvertex_status_id = lv_status.id
         LEFT JOIN partners_tllead AS tl_lead ON lv.tl_id = tl_lead.external_id
+        LEFT JOIN partners_subsystem AS subsystem ON subsystem.id = tl_lead.subsystem_id
         LEFT JOIN partners_offer as offer ON tl_lead.offer_id = offer.id
         LEFT JOIN partners_assignedoffer assigned_offer ON assigned_offer.offer_id = offer.id
         LEFT JOIN partners_groupoffer group_offer ON assigned_offer.group_id = group_offer.id
-        WHERE offer.id IS NOT NULL
-            AND lv_op.username IS NOT NULL
-            AND group_offer.name NOT IN ({})
-            AND DATE_ADD(lv.approved_at, INTERVAL 3 HOUR) >= %s
-            AND DATE_ADD(lv.approved_at, INTERVAL 3 HOUR) < %s
+        WHERE 1=1
+        AND offer.id IS NOT NULL
+        AND lv_op.username IS NOT NULL
+        AND group_offer.name NOT IN ({})
+        AND DATE_ADD(lv.approved_at, INTERVAL 3 HOUR) >= %s
+        AND DATE_ADD(lv.approved_at, INTERVAL 3 HOUR) < %s
         """.format(",".join(["%s"] * len(DBService.EXCLUDED_CATEGORIES)))
 
         params = DBService.EXCLUDED_CATEGORIES + [date_from, date_to]
+
+        if categories:
+            placeholders, cat_params = DBService._prepare_in_values(categories)
+            query += f" AND group_offer.name IN {placeholders}"
+            params.extend(cat_params)
+
+        if offer_ids:
+            placeholders, offer_params = DBService._prepare_in_values(offer_ids)
+            query += f" AND offer.id IN {placeholders}"
+            params.extend(offer_params)
+
+        if advertiser:
+            placeholders, adv_params = DBService._prepare_in_values(advertiser)
+            query += f" AND LOWER(subsystem.name) IN {placeholders}"
+            params.extend(adv_params)
+
+        if lv_ops:
+            placeholders, lv_params = DBService._prepare_in_values(lv_ops)
+            query += f" AND LOWER(lv_op.username) IN {placeholders}"
+            params.extend(lv_params)
+
+        if aff_ids:
+            placeholders, aff_params = DBService._prepare_in_values(aff_ids)
+            query += f" AND tl_lead.webmaster_id IN {placeholders}"
+            params.extend(aff_params)
+
+        logger.info(f"Запрос лидов за период: {date_from} - {date_to}")
         return DBService._execute_query(query, params)
 
     @staticmethod
     def get_leads_container(filters: Dict) -> List[Dict]:
         date_from = DBService._to_utc(filters.get('date_from'), "00:00:00")
         date_to = DBService._to_utc(filters.get('date_to'), "23:59:59")
+
+        if not date_from or not date_to:
+            logger.error("Не указаны даты начала или окончания периода")
+            return []
+
         advertiser = [a.lower() for a in filters.get('advertiser', [])]
         offer_ids = filters.get('offer_id', [])
         categories = filters.get('category', [])
         aff_ids = filters.get('aff_id', [])
 
+        # ИСПРАВЛЕНО: полное соответствие эталону
         query = """
         SELECT
             crm_leads_crmlead.id as lead_container_crm_lead_id,
-            crm_leads_crmlead.id as call_eff_crm_lead_id,    
-            LEFT(DATE_ADD(lv.created_at, INTERVAL 3 HOUR), 19) lead_container_created_at,
-            LEFT(DATE_ADD(lv.approved_at, INTERVAL 3 HOUR), 19) lead_container_approved_at,
-            LEFT(DATE_ADD(lv.canceled_at, INTERVAL 3 HOUR), 19) lead_container_canceled_at,    
-            LEFT(DATE_ADD(lv.buyout_at, INTERVAL 3 HOUR), 19) lead_container_buyout_at,
+            crm_leads_crmlead.id as call_eff_crm_lead_id,
+            LEFT(DATE_ADD(lv.created_at, INTERVAL 3 HOUR), 19) as lead_container_created_at,
+            LEFT(DATE_ADD(lv.approved_at, INTERVAL 3 HOUR), 19) as lead_container_approved_at,
+            LEFT(DATE_ADD(lv.canceled_at, INTERVAL 3 HOUR), 19) as lead_container_canceled_at,
+            LEFT(DATE_ADD(lv.buyout_at, INTERVAL 3 HOUR), 19) as lead_container_buyout_at,
             lv_status.status_verbose as lead_container_status_verbose,
-            lv_status.status_group as lead_container_status_group,    
+            lv_status.status_group as lead_container_status_group,
             pt.is_trash as lead_container_is_trash,
-            LEFT(DATE_ADD(lv.created_at, INTERVAL 27 HOUR), 19) lead_container_lead_ttl_till,
+            LEFT(DATE_ADD(lv.created_at, INTERVAL 3+24 HOUR), 19) as lead_container_lead_ttl_till,
             LEFT(DATE_ADD(NOW(), INTERVAL 3 HOUR), 19) as lead_container_now,
             offer.id as offer_id,
             offer.name as offer_name,
@@ -245,10 +377,11 @@ class DBService:
         LEFT JOIN partners_assignedoffer assigned_offer ON assigned_offer.offer_id = offer.id
         LEFT JOIN partners_groupoffer group_offer ON assigned_offer.group_id = group_offer.id
         LEFT JOIN partners_subsystem AS subsystem ON subsystem.id = pt.subsystem_id
-        WHERE offer.id IS NOT NULL
-            AND group_offer.name NOT IN ({})
-            AND DATE_ADD(lv.created_at, INTERVAL 3 HOUR) >= %s
-            AND DATE_ADD(lv.created_at, INTERVAL 3 HOUR) < %s
+        WHERE 1=1
+        AND offer.id IS NOT NULL
+        AND group_offer.name NOT IN ({})
+        AND DATE_ADD(lv.created_at, INTERVAL 3 HOUR) >= %s
+        AND DATE_ADD(lv.created_at, INTERVAL 3 HOUR) < %s
         """.format(",".join(["%s"] * len(DBService.EXCLUDED_CATEGORIES)))
 
         params = DBService.EXCLUDED_CATEGORIES + [date_from, date_to]
@@ -273,6 +406,7 @@ class DBService:
             query += f" AND pt.webmaster_id IN {placeholders}"
             params.extend(aff_params)
 
+        logger.info(f"Запрос контейнеров лидов за период: {date_from} - {date_to}")
         return DBService._execute_query(query, params)
 
     @staticmethod
@@ -295,13 +429,19 @@ class DBService:
             if 'отправить позже' in status_verbose_lower:
                 return "Заказ в статусе 'Отправить позже'"
 
-            if (approved_at and canceled_at and
-                    canceled_at != '' and canceled_at is not None and
-                    approved_at != '' and approved_at is not None):
-                if canceled_at:
-                    return f"Заказ отменён ({canceled_at}) после подтверждения ({approved_at})"
 
-            if not approved_at or approved_at == '':
+            if approved_at and canceled_at and canceled_at.strip():
+                try:
+
+                    approved_dt = datetime.strptime(approved_at, '%Y-%m-%d %H:%M:%S')
+                    canceled_dt = datetime.strptime(canceled_at, '%Y-%m-%d %H:%M:%S')
+                    if canceled_dt >= approved_dt:
+                        return f"Заказ отменён ({canceled_at}) после подтверждения ({approved_at})"
+                except ValueError:
+                    if canceled_at >= approved_at:
+                        return f"Заказ отменён ({canceled_at}) после подтверждения ({approved_at})"
+
+            if not approved_at or approved_at.strip() == '':
                 return "Отсутствует дата подтверждения"
 
             for bad_status in DBService.BAD_APPROVE_STATUS:
@@ -327,7 +467,7 @@ class DBService:
 
             if status_group != 'paid':
                 return "Лид не в группе статусов paid"
-            if not buyout_at or buyout_at == '':
+            if not buyout_at or buyout_at.strip() == '':
                 return "Отсутствует дата выкупа"
 
             return ""

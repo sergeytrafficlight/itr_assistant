@@ -1,11 +1,14 @@
 import logging
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional, Dict, List, Any
 from decimal import Decimal
-
 from .statistics import safe_div
 
 logger = logging.getLogger(__name__)
+
+# Счетчик для ограничения логов
+_log_counter = 0
+_MAX_LOGS = 40
 
 
 class Kpi:
@@ -15,26 +18,31 @@ class Kpi:
         self.period_date = r.get('call_eff_period_date')
         self.offer_id = r.get('call_eff_offer_id')
         self.affiliate_id = r.get('call_eff_affiliate_id')
-
         self.confirmation_price = r.get('call_eff_confirmation_price') or 0.0
         self.buyout_price = r.get('call_eff_buyout_price') or 0.0
         self.operator_efficiency = r.get('call_eff_operator_efficiency') or 0.0
         self.operator_efficiency_update_date = r.get('call_eff_operator_efficiency_update_date')
-
         self.planned_approve = r.get('call_eff_planned_approve') or 0.0
         self.planned_approve_update_date = r.get('call_eff_approve_update_date')
-
         self.planned_buyout = r.get('call_eff_planned_buyout') or 0.0
         self.planned_buyout_update_date = r.get('call_eff_buyout_update_date')
-
         self.confirmation_price = r.get('call_eff_confirmation_price') or 0.0
         self.confirmation_price_update_date = r.get('call_eff_confirmation_price_update_date')
-
         self.buyout_price = r.get('call_eff_buyout_price') or 0.0
         self.buyout_price_update_date = r.get('call_eff_buyout_price_update_date')
-
         self.key_aff_offer = self._make_key(self.affiliate_id, self.offer_id)
         self.is_personal_plan = self.affiliate_id is not None
+
+        # Исправленная проверка даты
+        if self.period_date:
+            if isinstance(self.period_date, str):
+                if len(self.period_date) != 10:
+                    raise ValueError(f"Wrong date for KPI '{self.period_date}' len({len(self.period_date)})")
+            elif isinstance(self.period_date, (datetime, date)):
+                # Конвертируем datetime в строку для единообразия
+                self.period_date = self.period_date.strftime('%Y-%m-%d')
+            else:
+                raise ValueError(f"Unexpected type for period_date: {type(self.period_date)}")
 
     @staticmethod
     def _make_key(affiliate_id: Optional[str], offer_id: str) -> str:
@@ -44,7 +52,8 @@ class Kpi:
 
     @staticmethod
     def _make_key_cache(affiliate_id: Optional[str], offer_id: str, date: str) -> str:
-        return f"{affiliate_id or 'null'}-{offer_id}-{date}"
+        affiliate_str = affiliate_id if affiliate_id is not None else "null"
+        return f"{affiliate_str}-{offer_id}-{date}"
 
     def print(self) -> str:
         return f"ID: {self.id} date: {self.period_date} offer_id: {self.offer_id} affiliate_id: {self.affiliate_id} op_eff: {self.operator_efficiency}"
@@ -58,7 +67,6 @@ class Call:
         self.uniqueid = r.get('call_eff_uniqueid')
         self.billsec = r.get('call_eff_billsec') or 0
         self.billsec_exact = r.get('call_eff_billsec_exact')
-
         if self.billsec_exact is not None:
             try:
                 self.billsec_exact = int(self.billsec_exact)
@@ -66,16 +74,13 @@ class Call:
                     self.billsec_exact = self.billsec
             except (ValueError, TypeError):
                 self.billsec_exact = self.billsec
-
         if self.billsec_exact and self.billsec_exact < self.billsec:
             self.billsec = self.billsec_exact
-
         self.operator_id = r.get('call_eff_operator_id')
         self.crm_lead_id = r.get('call_eff_crm_lead_id')
         self.calldate_str = r.get('call_eff_calldate')
         self.affiliate_id = r.get('call_eff_affiliate_id')
         self.calldate_date_str = self.calldate_str[:10] if self.calldate_str else ""
-
         if self.billsec is None:
             raise ValueError(f"Billsec is null id: {self.id}")
 
@@ -97,7 +102,6 @@ class Lead:
         self.is_salary_pay = True
         self.is_salary_not_pay_reason = ""
         self.offer_id = r.get('offer_id')
-
         if not self.offer_id:
             raise ValueError(f"Can't find offer id for lead crm id: {self.crm_lead_id}")
 
@@ -151,7 +155,6 @@ class KpiList:
         if key not in l:
             l[key] = []
         items = l[key]
-
         # Конвертируем даты для корректного сравнения
         current_period_date = self._normalize_date(kpi.period_date)
         if items:
@@ -166,6 +169,8 @@ class KpiList:
             return None
         if isinstance(date_value, datetime):
             return date_value
+        if isinstance(date_value, date):
+            return datetime.combine(date_value, datetime.min.time())
         if isinstance(date_value, str):
             try:
                 return datetime.strptime(date_value, '%Y-%m-%d')
@@ -187,24 +192,25 @@ class KpiList:
         if key not in l:
             return None
         items = l[key]
-
         # Конвертируем переданную дату для сравнения
         normalized_period_date = self._normalize_date(period_date)
         if normalized_period_date is None:
             return None
-
         for i in range(len(items) - 1, -1, -1):
             # Конвертируем дату KPI для сравнения
             kpi_date = self._normalize_date(items[i].period_date)
             if kpi_date is None:
                 continue
-
             if kpi_date > normalized_period_date:
                 continue
             return items[i]
         return None
 
     def find_kpi(self, affiliate_id: Optional[str], offer_id: str, period_date: str) -> Optional[Kpi]:
+        # Приводим period_date к строковому формату, если это необходимо
+        if isinstance(period_date, (datetime, date)):
+            period_date = period_date.strftime('%Y-%m-%d')
+
         if len(period_date) != 10:
             raise ValueError(f"Wrong kpi request period date '{period_date}' expecting len 10")
 
@@ -212,30 +218,30 @@ class KpiList:
             key_cache = Kpi._make_key_cache(affiliate_id, offer_id, period_date)
             if key_cache in self.kpi_cache:
                 return self.kpi_cache[key_cache]
-
             key = Kpi._make_key(affiliate_id, offer_id)
             kpi = self._find_kpi_by_list(self.kpi_by_aff_offer, key, period_date)
             if kpi:
                 self.kpi_cache[key_cache] = kpi
                 return kpi
-
         key_cache = Kpi._make_key_cache(None, offer_id, period_date)
         if key_cache in self.kpi_cache:
             return self.kpi_cache[key_cache]
-
         key = Kpi._make_key(None, offer_id)
         kpi = self._find_kpi_by_list(self.kpi_by_offer, key, period_date)
         if kpi:
             self.kpi_cache[key_cache] = kpi
-        return kpi
+            return kpi
 
     def find_kpi_operator_eff(self, affiliate_id: Optional[str], offer_id: str, period_date: str) -> Optional[Kpi]:
         kpi = self.find_kpi(affiliate_id, offer_id, period_date)
         if kpi is None:
             return None
-        if (kpi.operator_efficiency is None or kpi.operator_efficiency < self.min_eff) and (affiliate_id is not None):
+        # ТОЧНОЕ СООТВЕТСТВИЕ ЭТАЛОНУ: проверка (kpi.affiliate_id == affiliate_id)
+        if (kpi.operator_efficiency is None or kpi.operator_efficiency < self.min_eff) and (
+                kpi.affiliate_id == affiliate_id):
             return self.find_kpi(None, offer_id, period_date)
-        return kpi
+        else:
+            return kpi
 
 
 class Stat:
@@ -276,16 +282,17 @@ class Stat:
             logger.warning(f"Skip lead: {e}")
 
     def finalize(self, kpi_list: KpiList, is_fake_approve_func):
+        global _log_counter
         if self.finalized:
-            logger.warning("Finalize called on already finalized Stat, skipping")
+            if _log_counter < _MAX_LOGS:
+                logger.warning("Finalize called on already finalized Stat, skipping")
             return
-
         self.finalized = True
-        expecting_approved_leads = 0.0
-        has_error = False
 
         for group in self.calls_group.values():
             group.finalize()
+
+        for group in self.calls_group.values():
             if group.is_effective:
                 if not group.offer_id:
                     self.calls_group_without_calculation += 1
@@ -294,14 +301,15 @@ class Stat:
                 self.calls_group_with_calculation += 1
                 kpi = kpi_list.find_kpi_operator_eff(group.affiliate_id, str(group.offer_id), group.calldate_str)
 
+                # ТОЧНОЕ СООТВЕТСТВИЕ ЭТАЛОННОЙ ЛОГИКЕ:
                 if kpi is None:
-                    has_error = True
+                    self.expecting_approved_leads = None
                     self.kpi_calculation_errors += f"Can't find KPI for offer: {group.offer_id} affiliate_id: {group.affiliate_id}\n"
                 elif kpi.operator_efficiency < KpiList.min_eff:
-                    has_error = True
+                    self.expecting_approved_leads = None
                     self.kpi_calculation_errors += f"Wrong KPI for offer: {group.offer_id} affiliate_id: {group.affiliate_id} efficiency: {kpi.operator_efficiency} (< {KpiList.min_eff})\n"
-                elif not has_error:
-                    expecting_approved_leads += 1 / kpi.operator_efficiency
+                elif self.expecting_approved_leads is not None:
+                    self.expecting_approved_leads += 1 / kpi.operator_efficiency
 
         for lead in self.leads.values():
             lead.finalize(is_fake_approve_func)
@@ -311,26 +319,33 @@ class Stat:
                     continue
                 self.leads_with_calculation += 1
 
+        # 4. Расчет итоговых показателей (ТОЧНОЕ СООТВЕТСТВИЕ ЭТАЛОНУ)
         self.calls_group_effective_count = self.calls_group_without_calculation + self.calls_group_with_calculation
-        self.leads_effective_count = self.leads_with_calculation + self.leads_without_calculation
+        self.leads_effective_count = self.leads_without_calculation + self.leads_with_calculation
 
-        if self.leads_with_calculation > 0:
+        if self.calls_group_with_calculation and self.leads_with_calculation:
             self.effective_rate = safe_div(self.calls_group_with_calculation, self.leads_with_calculation)
         else:
             self.effective_rate = 0.0
 
-        if not has_error and expecting_approved_leads > 0:
-            self.expecting_effective_rate = safe_div(self.calls_group_with_calculation, expecting_approved_leads)
-            self.expecting_approved_leads = expecting_approved_leads
-            self.effective_percent = safe_div(self.leads_with_calculation, expecting_approved_leads) * 100
-        else:
-            self.expecting_effective_rate = 0.0
-            self.expecting_approved_leads = 0.0
-            self.effective_percent = 0.0
 
-        logger.info(
-            f"Engine stat finalized: calls={self.calls_group_effective_count}, leads={self.leads_effective_count}, "
-            f"effective_rate={self.effective_rate:.3f}, effective_percent={self.effective_percent:.1f}%")
+        if self.expecting_approved_leads is not None:
+            self.effective_percent = safe_div(self.leads_with_calculation, self.expecting_approved_leads) * 100
+            self.expecting_effective_rate = safe_div(self.calls_group_with_calculation, self.expecting_approved_leads)
+        else:
+            self.effective_percent = None
+            self.expecting_effective_rate = None
+
+        # 6. Логирование
+        if _log_counter < _MAX_LOGS:
+            effective_percent_str = f"{self.effective_percent:.1f}%" if self.effective_percent is not None else "None"
+            logger.info(
+                f"Engine stat finalized: calls={self.calls_group_effective_count}, leads={self.leads_effective_count}, "
+                f"effective_rate={self.effective_rate:.3f}, effective_percent={effective_percent_str}")
+            _log_counter += 1
+        elif _log_counter == _MAX_LOGS:
+            logger.info(f"Достигнут лимит логов ({_MAX_LOGS}). Дальнейшие логи finalize подавляются.")
+            _log_counter += 1
 
 
 def push_call_to_engine(sql_data: Dict, stat: Stat):
@@ -345,6 +360,7 @@ def push_lead_to_engine(sql_data: Dict, offer_id: int, stat: Stat):
 
 
 def finalize_engine_stat(stat: Stat, kpi_list: KpiList):
+    global _log_counter
     from .db_service import DBService
 
     def is_fake_approve_func(lead_dict: Dict) -> str:
@@ -353,4 +369,6 @@ def finalize_engine_stat(stat: Stat, kpi_list: KpiList):
     if not stat.finalized:
         stat.finalize(kpi_list, is_fake_approve_func)
     else:
-        logger.warning("Engine stat already finalized, skipping")
+        if _log_counter < _MAX_LOGS:
+            logger.warning("Engine stat already finalized, skipping")
+            _log_counter += 1
