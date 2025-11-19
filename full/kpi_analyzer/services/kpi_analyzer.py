@@ -52,17 +52,70 @@ class CommonItem:
             leads_approved_count=0,
             leads_buyout_count=0,
             leads_trash_count=0,
-            leads_total_count=0
+            leads_total_count=0,
+            leads_raw_count=0
         )
         self.approve_percent_fact: Optional[float] = None
         self.buyout_percent_fact: Optional[float] = None
         self.trash_percent: Optional[float] = None
+        self.raw_to_approve_percent: Optional[float] = None
+        self.raw_to_buyout_percent: Optional[float] = None
+        self.non_trash_to_buyout_percent: Optional[float] = None
 
     def push_lead(self, sql_data: Dict, offer_id: int = None):
         push_lead_to_engine(sql_data, offer_id, self.kpi_stat.stat)
 
     def push_call(self, sql_data: Dict):
         push_call_to_engine(sql_data, self.kpi_stat.stat)
+
+    def calculate_correction_flags(self):
+        self.kpi_eff_need_correction = False
+        self.kpi_eff_need_correction_str = ""
+        self.kpi_app_need_correction = False
+        self.kpi_app_need_correction_str = ""
+        self.kpi_buyout_need_correction = False
+        self.kpi_buyout_need_correction_str = ""
+
+        if self.kpi_current_plan and self.recommended_efficiency.value:
+            plan_eff = safe_float(self.kpi_current_plan.operator_efficiency) or 0
+            rec_eff = safe_float(self.recommended_efficiency.value) or 0
+            if plan_eff is not None and rec_eff is not None:
+                if abs(plan_eff - rec_eff) > 0.2:
+                    self.set_kpi_eff_need_correction(f"Эффективность: план {plan_eff:.1f}% vs рек. {rec_eff:.1f}%")
+            elif plan_eff is None or plan_eff == 0:
+                self.set_kpi_eff_need_correction("KPI эффективности не установлен")
+
+        if self.lead_container.leads_non_trash_count >= 10:
+            current_approve = self.approve_percent_fact or 0
+
+
+            if current_approve < 20:
+                self.set_kpi_app_need_correction(f"Критически низкий аппрув: {current_approve:.1f}%")
+            elif current_approve < 30:
+                self.set_kpi_app_need_correction(f"Низкий аппрув: {current_approve:.1f}%")
+
+            if self.recommended_approve and self.recommended_approve.value:
+                rec_approve = safe_float(self.recommended_approve.value) or 0
+                if abs(current_approve - rec_approve) > 5:
+                    self.set_kpi_app_need_correction(f"Аппрув: факт {current_approve:.1f}% vs рек. {rec_approve:.1f}%")
+
+        if self.lead_container.leads_approved_count >= 5:
+            current_buyout = self.buyout_percent_fact or 0
+
+            if current_buyout < 15:
+                self.set_kpi_buyout_need_correction(f"Критически низкий выкуп: {current_buyout:.1f}%")
+            elif current_buyout < 25:
+                self.set_kpi_buyout_need_correction(f"Низкий выкуп: {current_buyout:.1f}%")
+
+            if self.recommended_buyout and self.recommended_buyout.value:
+                rec_buyout = safe_float(self.recommended_buyout.value) or 0
+                if abs(current_buyout - rec_buyout) > 5:
+                    self.set_kpi_buyout_need_correction(f"Выкуп: факт {current_buyout:.1f}% vs рек. {rec_buyout:.1f}%")
+
+        if self.lead_container.leads_total_count > 10:
+            current_trash = self.trash_percent or 0
+            if current_trash > 60:
+                self.set_kpi_app_need_correction(f"Высокий процент треша: {current_trash:.1f}%")
 
     def finalize(self, kpi_list: KpiList):
         finalize_engine_stat(self.kpi_stat.stat, kpi_list)
@@ -73,44 +126,51 @@ class CommonItem:
         self.kpi_stat.effective_rate = self.kpi_stat.stat.effective_rate
         self.kpi_stat.expecting_effective_rate = self.kpi_stat.stat.expecting_effective_rate
 
-        if self.lead_container.leads_non_trash_count > 0:
+        lc = self.lead_container
+
+        if lc.leads_non_trash_count > 0:
             self.approve_percent_fact = safe_div(
-                self.lead_container.leads_approved_count,
-                self.lead_container.leads_non_trash_count
+                lc.leads_approved_count,
+                lc.leads_non_trash_count
             ) * 100
 
-        if self.lead_container.leads_approved_count > 0:
+        if lc.leads_approved_count > 0:
             self.buyout_percent_fact = safe_div(
-                self.lead_container.leads_buyout_count,
-                self.lead_container.leads_approved_count
+                lc.leads_buyout_count,
+                lc.leads_approved_count
             ) * 100
 
-        if self.lead_container.leads_total_count > 0:
+        if lc.leads_total_count > 0:
             self.trash_percent = safe_div(
-                self.lead_container.leads_trash_count,
-                self.lead_container.leads_total_count
+                lc.leads_trash_count,
+                lc.leads_total_count
+            ) * 100
+
+        if lc.leads_raw_count > 0:
+            self.raw_to_approve_percent = safe_div(
+                lc.leads_approved_count,
+                lc.leads_raw_count
+            ) * 100
+
+        if lc.leads_raw_count > 0:
+            self.raw_to_buyout_percent = safe_div(
+                lc.leads_buyout_count,
+                lc.leads_raw_count
+            ) * 100
+
+        if lc.leads_non_trash_count > 0:
+            self.non_trash_to_buyout_percent = safe_div(
+                lc.leads_buyout_count,
+                lc.leads_non_trash_count
             ) * 100
 
         if self.kpi_current_plan is not None:
             self.expecting_approve_leads = safe_float(
-                self.lead_container.leads_non_trash_count * self.kpi_current_plan.planned_approve)
+                lc.leads_non_trash_count * self.kpi_current_plan.planned_approve)
             self.expecting_buyout_leads = safe_float(
-                self.lead_container.leads_approved_count * self.kpi_current_plan.planned_buyout)
-            if self.kpi_current_plan is None:
-                self.set_kpi_eff_need_correction("KPI not found")
-            elif self.recommended_efficiency.value is None:
-                self.set_kpi_eff_need_correction("Recommendation not generated")
-            else:
-                plan_efficiency = safe_float(self.kpi_current_plan.operator_efficiency)
-                rec_efficiency = safe_float(self.recommended_efficiency.value)
-                if abs(rec_efficiency - plan_efficiency) > 0.2:
-                    self.set_kpi_eff_need_correction(
-                        f"Diff >0.2: rec={rec_efficiency:.3f}, plan={plan_efficiency:.3f}"
-                    )
-                elif plan_efficiency <= 0:
-                    self.set_kpi_eff_need_correction(f"KPI not set: {plan_efficiency}")
+                lc.leads_approved_count * self.kpi_current_plan.planned_buyout)
 
-
+        self.calculate_correction_flags()
 
     def set_kpi_eff_need_correction(self, comment: str):
         self.kpi_eff_need_correction = True
@@ -149,10 +209,14 @@ class CategoryItem:
         self.recommended_buyout: Recommendation = Recommendation(None, "")
         self.recommended_confirmation_price: Recommendation = Recommendation(None, "")
 
-
         self.approve_percent_fact: Optional[float] = None
         self.buyout_percent_fact: Optional[float] = None
+        self.trash_percent: Optional[float] = None
+        self.raw_to_approve_percent: Optional[float] = None
+        self.raw_to_buyout_percent: Optional[float] = None
+        self.non_trash_to_buyout_percent: Optional[float] = None
         self.max_confirmation_price: float = 0
+
         self.expecting_approve_leads: Optional[float] = None
         self.expecting_buyout_leads: Optional[float] = None
 
@@ -164,8 +228,18 @@ class CategoryItem:
         self.lead_container = SimpleNamespace(
             leads_non_trash_count=0,
             leads_approved_count=0,
-            leads_buyout_count=0
+            leads_buyout_count=0,
+            leads_trash_count=0,
+            leads_total_count=0,
+            leads_raw_count=0
         )
+
+        self.kpi_eff_need_correction = False
+        self.kpi_eff_need_correction_str = ""
+        self.kpi_app_need_correction = False
+        self.kpi_app_need_correction_str = ""
+        self.kpi_buyout_need_correction = False
+        self.kpi_buyout_need_correction_str = ""
 
     def push_offer(self, offer_data: Dict, sql_data: Dict):
         offer_id = offer_data.get('id')
@@ -186,16 +260,17 @@ class CategoryItem:
                 self.offer[key] = OfferItem(key, lead_data.get('offer_name', ''))
             self.offer[key].push_lead(sql_data, offer_id=int(offer_id))
 
-
+            self.offer[key].lead_container.leads_raw_count += 1
             self.offer[key].lead_container.leads_total_count += 1
+
             if not sql_data.get('lead_container_is_trash', False):
                 self.offer[key].lead_container.leads_non_trash_count += 1
                 if sql_data.get('lead_container_approved_at'):
                     self.offer[key].lead_container.leads_approved_count += 1
                     if sql_data.get('lead_container_buyout_at'):
                         self.offer[key].lead_container.leads_buyout_count += 1
-                if sql_data.get('lead_container_is_trash', False):
-                    self.offer[key].lead_container.leads_trash_count += 1
+            else:
+                self.offer[key].lead_container.leads_trash_count += 1
 
         if str(aff_id).isdigit():
             key = str(aff_id)
@@ -203,31 +278,34 @@ class CategoryItem:
                 self.aff[key] = CommonItem(key, f"Web #{key}")
             self.aff[key].push_lead(sql_data, offer_id=int(offer_id))
 
-
+            self.aff[key].lead_container.leads_raw_count += 1
             self.aff[key].lead_container.leads_total_count += 1
+
             if not sql_data.get('lead_container_is_trash', False):
                 self.aff[key].lead_container.leads_non_trash_count += 1
                 if sql_data.get('lead_container_approved_at'):
                     self.aff[key].lead_container.leads_approved_count += 1
                     if sql_data.get('lead_container_buyout_at'):
                         self.aff[key].lead_container.leads_buyout_count += 1
-                if sql_data.get('lead_container_is_trash', False):
-                    self.aff[key].lead_container.leads_trash_count += 1
+            else:
+                self.aff[key].lead_container.leads_trash_count += 1
 
         if operator_name:
             if operator_name not in self.operator:
                 self.operator[operator_name] = CommonItem(operator_name, operator_name)
             self.operator[operator_name].push_lead(sql_data, offer_id=int(offer_id))
 
+            self.operator[operator_name].lead_container.leads_raw_count += 1
             self.operator[operator_name].lead_container.leads_total_count += 1
+
             if not sql_data.get('lead_container_is_trash', False):
                 self.operator[operator_name].lead_container.leads_non_trash_count += 1
                 if sql_data.get('lead_container_approved_at'):
                     self.operator[operator_name].lead_container.leads_approved_count += 1
                     if sql_data.get('lead_container_buyout_at'):
                         self.operator[operator_name].lead_container.leads_buyout_count += 1
-                if sql_data.get('lead_container_is_trash', False):
-                    self.operator[operator_name].lead_container.leads_trash_count += 1
+            else:
+                self.operator[operator_name].lead_container.leads_trash_count += 1
 
         push_lead_to_engine(sql_data, int(offer_id) if str(offer_id).isdigit() else None, self.kpi_stat.stat)
 
@@ -256,86 +334,102 @@ class CategoryItem:
 
         push_call_to_engine(sql_data, self.kpi_stat.stat)
 
-    def finalize(self, kpi_list: KpiList):
+    def _finalize_operators_and_affiliates(self, kpi_list: KpiList):
+        for operator in self.operator.values():
+            operator.recommended_efficiency = self.recommended_efficiency
+            operator.recommended_approve = self.recommended_approve
+            operator.recommended_buyout = self.recommended_buyout
+            operator.recommended_confirmation_price = self.recommended_confirmation_price
+            operator.finalize(kpi_list)
 
-        self._generate_recommendations()
+        for aff in self.aff.values():
+            aff.recommended_efficiency = self.recommended_efficiency
+            aff.recommended_approve = self.recommended_approve
+            aff.recommended_buyout = self.recommended_buyout
+            aff.recommended_confirmation_price = self.recommended_confirmation_price
+            aff.finalize(kpi_list)
 
-        for offer in self.offer.values():
-            offer.kpi_current_plan = kpi_list.find_kpi(None, str(offer.key), datetime.now().strftime('%Y-%m-%d'))
-            offer.recommended_efficiency = self.recommended_efficiency
-            offer.recommended_approve = self.recommended_approve
-            offer.recommended_buyout = self.recommended_buyout
-            offer.recommended_confirmation_price = self.recommended_confirmation_price
-            offer.finalize(kpi_list)
-            self._validate_offer_kpi(offer)
-
-        for item in list(self.offer.values()) + list(self.aff.values()) + list(self.operator.values()):
-            item.finalize(kpi_list)
-
-        finalize_engine_stat(self.kpi_stat.stat, kpi_list)
-
-        self.kpi_stat.calls_group_effective_count = self.kpi_stat.stat.calls_group_effective_count
-        self.kpi_stat.leads_effective_count = self.kpi_stat.stat.leads_effective_count
-        self.kpi_stat.effective_percent = self.kpi_stat.stat.effective_percent
-        self.kpi_stat.effective_rate = self.kpi_stat.stat.effective_rate
-        self.kpi_stat.expecting_effective_rate = self.kpi_stat.stat.expecting_effective_rate
-
-        self.operator_sorted = self.recommendation_engine.sort_operators_by_efficiency(self.operator)
-        self.operator_recommended = self.recommendation_engine.get_operators_for_recommendations(self.operator_sorted)
-        self.recommended_efficiency = self.recommendation_engine.get_recommended_efficiency(
-            self.operator_sorted, self.operator_recommended.value
-        )
-
-        self.max_confirmation_price = 0
-        self.expecting_approve_leads = 0.0
-        self.expecting_buyout_leads = 0.0
-        has_none = False
-
+    def _calculate_category_metrics(self):
         total_non_trash = 0
         total_approved = 0
         total_buyout = 0
+        total_trash = 0
+        total_raw = 0
+        total_leads = 0
 
         for offer in self.offer.values():
-            offer.kpi_current_plan = kpi_list.find_kpi(None, str(offer.key), datetime.now().strftime('%Y-%m-%d'))
-            offer.recommended_efficiency = self.recommended_efficiency
-            offer.finalize(kpi_list)
-
-            if offer.kpi_current_plan and offer.kpi_current_plan.confirmation_price:
-                self.max_confirmation_price = max(self.max_confirmation_price,
-                                                  safe_float(offer.kpi_current_plan.confirmation_price))
-
-            if offer.expecting_approve_leads is not None:
-                if self.expecting_approve_leads is None:
-                    self.expecting_approve_leads = 0.0
-                self.expecting_approve_leads += safe_float(offer.expecting_approve_leads)
-            else:
-                has_none = True
-
-            if offer.expecting_buyout_leads is not None:
-                if self.expecting_buyout_leads is None:
-                    self.expecting_buyout_leads = 0.0
-                self.expecting_buyout_leads += safe_float(offer.expecting_buyout_leads)
-            else:
-                has_none = True
-
             total_non_trash += offer.lead_container.leads_non_trash_count
             total_approved += offer.lead_container.leads_approved_count
             total_buyout += offer.lead_container.leads_buyout_count
+            total_trash += offer.lead_container.leads_trash_count
+            total_raw += offer.lead_container.leads_raw_count
+            total_leads += offer.lead_container.leads_total_count
 
         self.lead_container.leads_non_trash_count = total_non_trash
         self.lead_container.leads_approved_count = total_approved
         self.lead_container.leads_buyout_count = total_buyout
+        self.lead_container.leads_trash_count = total_trash
+        self.lead_container.leads_raw_count = total_raw
+        self.lead_container.leads_total_count = total_leads
 
         self.approve_percent_fact = safe_div(total_approved, total_non_trash) * 100 if total_non_trash > 0 else 0
         self.buyout_percent_fact = safe_div(total_buyout, total_approved) * 100 if total_approved > 0 else 0
+        self.trash_percent = safe_div(total_trash, total_leads) * 100 if total_leads > 0 else 0
+        self.raw_to_approve_percent = safe_div(total_approved, total_raw) * 100 if total_raw > 0 else 0
+        self.raw_to_buyout_percent = safe_div(total_buyout, total_raw) * 100 if total_raw > 0 else 0
+        self.non_trash_to_buyout_percent = safe_div(total_buyout, total_non_trash) * 100 if total_non_trash > 0 else 0
 
-        if has_none:
-            self.expecting_approve_leads = None
-            self.expecting_buyout_leads = None
+    def _calculate_category_correction_flags(self):
+        if self.recommended_efficiency and self.recommended_efficiency.value:
+            current_eff = self.kpi_stat.effective_percent or 0
+            rec_eff = safe_float(self.recommended_efficiency.value) or 0
+            if abs(current_eff - rec_eff) > 5:
+                self.kpi_eff_need_correction = True
+                self.kpi_eff_need_correction_str = f"Эффективность категории: факт {current_eff:.1f}% vs рек. {rec_eff:.1f}%"
 
+        if self.lead_container.leads_non_trash_count > 10:
+            current_approve = self.approve_percent_fact or 0
+            if current_approve < 30:
+                self.kpi_app_need_correction = True
+                self.kpi_app_need_correction_str = f"Низкий аппрув категории: {current_approve:.1f}%"
+
+        if self.lead_container.leads_approved_count > 5:
+            current_buyout = self.buyout_percent_fact or 0
+            if current_buyout < 20:
+                self.kpi_buyout_need_correction = True
+                self.kpi_buyout_need_correction_str = f"Низкий выкуп категории: {current_buyout:.1f}%"
+
+    def _calculate_recommended_efficiency(self):
+        if not self.operator_recommended.value:
+            return Recommendation(None, "Недостаточно операторов для принятия решения")
+
+        calls_total = 0
+        leads_total = 0
+        comment = ""
+
+        for operator in self.operator_sorted:
+            if operator.key not in self.operator_recommended.value:
+                continue
+            calls_total += operator.kpi_stat.calls_group_effective_count
+            leads_total += operator.kpi_stat.leads_effective_count
+            comment += f"{operator.key} звонков: {operator.kpi_stat.calls_group_effective_count} аппрувов: {operator.kpi_stat.leads_effective_count}\n"
+
+        result = safe_div(calls_total, leads_total)
+        comment += f"Звонков: {calls_total} лидов: {leads_total}\n"
+        comment += f"Результат: {result}\n"
+
+        if calls_total < self.recommendation_engine.calls_count_for_analyze:
+            return Recommendation(None, comment + "Недостаточно звонков для принятия решения")
+        else:
+            return Recommendation(result, comment)
+
+    def _calculate_recommended_approve(self):
         fact_approve = self.approve_percent_fact or 0
 
-        if self.expecting_approve_leads is not None and self.expecting_approve_leads > 0:
+        if (self.expecting_approve_leads is not None and
+                self.expecting_approve_leads > 0 and
+                self.lead_container.leads_non_trash_count > 0):
+
             effective_percent = safe_float(self.kpi_stat.effective_percent) or 0
 
             if effective_percent > 0:
@@ -345,7 +439,12 @@ class CategoryItem:
                 perhaps_app_count = self.lead_container.leads_approved_count
 
             rec_approve = safe_div(perhaps_app_count, self.lead_container.leads_non_trash_count) * 100
+
+
+            rec_approve = max(0, min(rec_approve, 100))
+
             comment = f"Текущая эффективность: {effective_percent:.1f}%, коррекция -> вероятное к-во аппрувов: {perhaps_app_count:.0f}"
+
 
             if rec_approve < fact_approve:
                 comment += f"\nФактический аппрув ({fact_approve:.1f}) выше рекоммендуемого ({rec_approve:.1f}), коррекция рекоммендации до фактического аппрува"
@@ -354,120 +453,184 @@ class CategoryItem:
                 comment += f"\nФактический аппрув ({fact_approve:.1f}) рекоммендуемый ({rec_approve:.1f}), выше на +5%, коррекция до верхней границы +5%"
                 rec_approve = fact_approve + 5
 
-            self.recommended_approve = Recommendation(rec_approve, comment)
+            return Recommendation(rec_approve, comment)
         else:
-            rec_approve = fact_approve
-            comment = "Нет данных для расчета ожидаемых аппрувов"
-            self.recommended_approve = Recommendation(rec_approve, comment)
+            if fact_approve > 0:
+                rec_approve = min(fact_approve * 1.05, 80)
+                comment = f"Текущий аппрув: {fact_approve:.1f}%, рекомендуется: {rec_approve:.1f}%"
+            else:
+                rec_approve = 30.0
+                comment = "Недостаточно данных для расчета, используется значение по умолчанию"
 
-        self.recommended_buyout = Recommendation(
-            safe_float(self.buyout_percent_fact) * 1.02 if self.buyout_percent_fact else 0,
-            f"Текущий выкуп: {safe_float(self.buyout_percent_fact) or 0:.1f}%, поднимаем на 2%"
-        )
+            return Recommendation(rec_approve, comment)
+
+    def _calculate_recommended_buyout(self):
+        current_buyout = self.buyout_percent_fact or 0
+
+        if current_buyout > 0:
+            recommended_buyout = current_buyout * 1.02
+            recommended_buyout = max(0, min(recommended_buyout, 100))
+            comment = f"Текущий выкуп: {current_buyout:.1f}%, поднимаем на 2%"
+        else:
+            recommended_buyout = 25.0
+            comment = "Недостаточно данных для расчета, используется значение по умолчанию"
+
+        return Recommendation(recommended_buyout, comment)
+
+    def finalize(self, kpi_list: KpiList):
+        self.kpi_eff_need_correction = False
+        self.kpi_eff_need_correction_str = ""
+        self.kpi_app_need_correction = False
+        self.kpi_app_need_correction_str = ""
+        self.kpi_buyout_need_correction = False
+        self.kpi_buyout_need_correction_str = ""
+
+        for offer in self.offer.values():
+            offer.kpi_current_plan = kpi_list.find_kpi(None, str(offer.key), datetime.now().strftime('%Y-%m-%d'))
+            offer.finalize(kpi_list)
+
+        finalize_engine_stat(self.kpi_stat.stat, kpi_list)
+
+        self.kpi_stat.calls_group_effective_count = self.kpi_stat.stat.calls_group_effective_count
+        self.kpi_stat.leads_effective_count = self.kpi_stat.stat.leads_effective_count
+        self.kpi_stat.effective_percent = self.kpi_stat.stat.effective_percent
+        self.kpi_stat.effective_rate = self.kpi_stat.stat.effective_rate
+        self.kpi_stat.expecting_effective_rate = self.kpi_stat.stat.expecting_effective_rate
+
+        self._calculate_category_metrics()
+
+        self.operator_sorted = self.recommendation_engine.sort_operators_by_efficiency(self.operator)
+        self.operator_recommended = self.recommendation_engine.get_operators_for_recommendations(self.operator_sorted)
+
+        self.recommended_efficiency = self._calculate_recommended_efficiency()
+
+        self.max_confirmation_price = 0
+        for offer in self.offer.values():
+            if offer.kpi_current_plan and offer.kpi_current_plan.confirmation_price:
+                self.max_confirmation_price = max(self.max_confirmation_price,
+                                                  safe_float(offer.kpi_current_plan.confirmation_price))
+
+        self.expecting_approve_leads = 0.0
+        self.expecting_buyout_leads = 0.0
+        has_none = False
+
+        for offer in self.offer.values():
+            if offer.expecting_approve_leads is not None:
+                self.expecting_approve_leads += safe_float(offer.expecting_approve_leads)
+            else:
+                has_none = True
+
+            if offer.expecting_buyout_leads is not None:
+                self.expecting_buyout_leads += safe_float(offer.expecting_buyout_leads)
+            else:
+                has_none = True
+
+        if has_none:
+            self.expecting_approve_leads = None
+            self.expecting_buyout_leads = None
+
+
+        total_non_trash = self.lead_container.leads_non_trash_count
+        total_approved = self.lead_container.leads_approved_count
+
+        if total_non_trash > 0:
+            weighted_approve_sum = 0.0
+            total_weight = 0
+
+            for offer in self.offer.values():
+                if (offer.kpi_current_plan and
+                        offer.kpi_current_plan.planned_approve is not None and
+                        offer.lead_container.leads_non_trash_count > 0):
+                    plan_approve = safe_float(offer.kpi_current_plan.planned_approve) or 0
+                    weight = offer.lead_container.leads_non_trash_count
+
+                    weighted_approve_sum += plan_approve * weight
+                    total_weight += weight
+
+            if total_weight > 0:
+                self.approve_rate_plan = weighted_approve_sum / total_weight
+            else:
+                self.approve_rate_plan = 0
+        else:
+            self.approve_rate_plan = 0
+
+        if total_approved > 0:
+            weighted_buyout_sum = 0.0
+            total_weight = 0
+
+            for offer in self.offer.values():
+                if (offer.kpi_current_plan and
+                        offer.kpi_current_plan.planned_buyout is not None and
+                        offer.lead_container.leads_approved_count > 0):
+                    plan_buyout = safe_float(offer.kpi_current_plan.planned_buyout) or 0
+                    weight = offer.lead_container.leads_approved_count
+
+                    weighted_buyout_sum += plan_buyout * weight
+                    total_weight += weight
+
+            if total_weight > 0:
+                self.buyout_rate_plan = weighted_buyout_sum / total_weight
+            else:
+                self.buyout_rate_plan = 0
+        else:
+            self.buyout_rate_plan = 0
+
+        self.recommended_approve = self._calculate_recommended_approve()
+        self.recommended_buyout = self._calculate_recommended_buyout()
+
         self.recommended_confirmation_price = Recommendation(
             self.max_confirmation_price,
             "Максимальный чек в группе"
         )
 
         for offer in self.offer.values():
+            offer.recommended_efficiency = self.recommended_efficiency
             offer.recommended_approve = self.recommended_approve
             offer.recommended_buyout = self.recommended_buyout
             offer.recommended_confirmation_price = self.recommended_confirmation_price
-            self._validate_offer_kpi(offer)
+            offer.calculate_correction_flags()
+
+        self._finalize_operators_and_affiliates(kpi_list)
+
+        self._calculate_category_correction_flags()
 
     def _validate_offer_kpi(self, offer: OfferItem):
         if not offer.kpi_current_plan:
-            offer.set_kpi_app_need_correction("KPI not found")
-            offer.set_kpi_buyout_need_correction("KPI not found")
-            offer.set_confirmation_price_need_correction("KPI not found")
             return
 
         planned_approve = safe_float(offer.kpi_current_plan.planned_approve)
         planned_buyout = safe_float(offer.kpi_current_plan.planned_buyout)
-        recommended_approve = safe_float(offer.recommended_approve.value) if offer.recommended_approve.value else None
-        recommended_buyout = safe_float(offer.recommended_buyout.value) if offer.recommended_buyout.value else None
+        recommended_approve = safe_float(
+            offer.recommended_approve.value) if offer.recommended_approve and offer.recommended_approve.value else None
+        recommended_buyout = safe_float(
+            offer.recommended_buyout.value) if offer.recommended_buyout and offer.recommended_buyout.value else None
         confirmation_price = safe_float(offer.kpi_current_plan.confirmation_price)
 
         if planned_approve is None or planned_approve < 0.1:
             offer.set_kpi_app_need_correction(
-                f"KPI аппрува не установлен или имеет предельно низкое значение (<0.1): {planned_approve}")
+                f"KPI аппрува не установлен или имеет предельно низкое значение: {planned_approve}")
         elif recommended_approve is None:
-            offer.set_kpi_app_need_correction("Рекоммендация несформирована")
+            pass
         elif abs(planned_approve - recommended_approve) > 1:
             offer.set_kpi_app_need_correction(
-                f"Плановый % аппрува ({planned_approve}) отличается от рекоммендации ({recommended_approve}) более чем на 1%")
+                f"Плановый % аппрува ({planned_approve:.1f}) отличается от рекоммендации ({recommended_approve:.1f})")
 
         if planned_buyout is None or planned_buyout < 0.1:
             offer.set_kpi_buyout_need_correction(
-                f"KPI выкупа не установлен или имеет предельно низкое значение (<0.1): {planned_buyout}")
+                f"KPI выкупа не установлен или имеет предельно низкое значение: {planned_buyout}")
         elif recommended_buyout is None:
-            offer.set_kpi_buyout_need_correction("Рекоммендация несформирована")
+            pass
         elif abs(planned_buyout - recommended_buyout) > 1:
             offer.set_kpi_buyout_need_correction(
-                f"Плановый % выкупа ({planned_buyout}) отличается от рекоммендации ({recommended_buyout}) более чем на 1%")
+                f"Плановый % выкупа ({planned_buyout:.1f}) отличается от рекоммендации ({recommended_buyout:.1f})")
 
         if confirmation_price is None or confirmation_price < 1:
             offer.set_confirmation_price_need_correction("Чек подтверждения не установлен или предельно мал")
         elif self.max_confirmation_price == 0 or self.max_confirmation_price < 1:
-            offer.set_confirmation_price_need_correction(
-                "Не удалось определить максимальный чек в группе или он предельно мал")
+            offer.set_confirmation_price_need_correction("Не удалось определить максимальный чек в группе")
         elif confirmation_price != self.max_confirmation_price:
             offer.set_confirmation_price_need_correction(
                 f"Текущий чек подтверждения ({confirmation_price}) < Максимального в группе ({self.max_confirmation_price})")
-
-    def _generate_recommendations(self):
-        """Генерация рекомендаций для категории"""
-        if self.operator_sorted:
-            self.recommended_efficiency = self.recommendation_engine.get_recommended_efficiency(
-                self.operator_sorted,
-                self.operator_recommended.value if self.operator_recommended else None
-            )
-        else:
-            avg_efficiency = self.kpi_stat.effective_percent or 0
-            self.recommended_efficiency = Recommendation(
-                avg_efficiency,
-                "На основе средней эффективности по категории"
-            )
-
-        # Рекомендация по аппрувам
-        if self.lead_container.leads_non_trash_count > 10:
-            current_approve = self.approve_percent_fact or 0
-            recommended_approve = min(current_approve * 1.1, 95)
-            self.recommended_approve = Recommendation(
-                recommended_approve,
-                f"Текущий аппрув: {current_approve:.1f}%, рекомендуется: {recommended_approve:.1f}%"
-            )
-        else:
-            self.recommended_approve = Recommendation(
-                70,
-                "Недостаточно данных для анализа, установлено значение по умолчанию"
-            )
-
-        if self.lead_container.leads_approved_count > 5:
-            current_buyout = self.buyout_percent_fact or 0
-            recommended_buyout = min(current_buyout * 1.05, 80)
-            self.recommended_buyout = Recommendation(
-                recommended_buyout,
-                f"Текущий выкуп: {current_buyout:.1f}%, рекомендуется: {recommended_buyout:.1f}%"
-            )
-        else:
-            self.recommended_buyout = Recommendation(
-                50,
-                "Недостаточно данных для анализа, установлено значение по умолчанию"
-            )
-
-        # Рекомендация по чеку подтверждения
-        if self.max_confirmation_price > 0:
-            self.recommended_confirmation_price = Recommendation(
-                self.max_confirmation_price,
-                f"Максимальный чек подтверждения в категории: {self.max_confirmation_price}"
-            )
-        else:
-            self.recommended_confirmation_price = Recommendation(
-                1000,
-                "Чек не установлен, используется значение по умолчанию"
-            )
-
 
 class Stat:
     def __init__(self):
@@ -495,37 +658,46 @@ class Stat:
             offer_id = str(lead.get('offer_id', ''))
 
             if category_name not in category_leads:
-                category_leads[category_name] = {'non_trash': 0, 'approved': 0, 'buyout': 0}
+                category_leads[category_name] = {'raw': 0, 'non_trash': 0, 'approved': 0, 'buyout': 0}
             if offer_id not in offer_leads:
-                offer_leads[offer_id] = {'non_trash': 0, 'approved': 0, 'buyout': 0}
+                offer_leads[offer_id] = {'raw': 0, 'non_trash': 0, 'approved': 0, 'buyout': 0}
+
+            category_leads[category_name]['raw'] += 1
+            offer_leads[offer_id]['raw'] += 1
 
             is_trash = lead.get('lead_container_is_trash', False)
+            approved_at = lead.get('lead_container_approved_at')
+
+            if approved_at:
+                fake_approve_reason = DBService.is_fake_approve({
+                    'status_verbose': lead.get('lead_container_status_verbose', ''),
+                    'status_group': lead.get('lead_container_status_group', ''),
+                    'approved_at': approved_at,
+                    'canceled_at': lead.get('lead_container_canceled_at', '')
+                })
+                if not fake_approve_reason:
+                    is_trash = False
+
             if not is_trash:
                 category_leads[category_name]['non_trash'] += 1
                 offer_leads[offer_id]['non_trash'] += 1
 
-                if lead.get('lead_container_approved_at'):
-                    fake_approve_reason = DBService.is_fake_approve({
-                        'status_verbose': lead.get('lead_container_status_verbose', ''),
-                        'status_group': lead.get('lead_container_status_group', ''),
-                        'approved_at': lead.get('lead_container_approved_at', ''),
-                        'canceled_at': lead.get('lead_container_canceled_at', '')
-                    })
-                    if not fake_approve_reason:
-                        category_leads[category_name]['approved'] += 1
-                        offer_leads[offer_id]['approved'] += 1
+                if approved_at and not fake_approve_reason:
+                    category_leads[category_name]['approved'] += 1
+                    offer_leads[offer_id]['approved'] += 1
 
-                        if lead.get('lead_container_buyout_at'):
-                            fake_buyout_reason = DBService.is_fake_buyout({
-                                'status_group': lead.get('lead_container_status_group', ''),
-                                'buyout_at': lead.get('lead_container_buyout_at', '')
-                            })
-                            if not fake_buyout_reason:
-                                category_leads[category_name]['buyout'] += 1
-                                offer_leads[offer_id]['buyout'] += 1
+                    if lead.get('lead_container_buyout_at'):
+                        fake_buyout_reason = DBService.is_fake_buyout({
+                            'status_group': lead.get('lead_container_status_group', ''),
+                            'buyout_at': lead.get('lead_container_buyout_at', '')
+                        })
+                        if not fake_buyout_reason:
+                            category_leads[category_name]['buyout'] += 1
+                            offer_leads[offer_id]['buyout'] += 1
 
         for cat_name, cat_data in category_leads.items():
             if cat_name in self.category:
+                self.category[cat_name].lead_container.leads_raw_count = cat_data['raw']
                 self.category[cat_name].lead_container.leads_non_trash_count = cat_data['non_trash']
                 self.category[cat_name].lead_container.leads_approved_count = cat_data['approved']
                 self.category[cat_name].lead_container.leads_buyout_count = cat_data['buyout']
@@ -533,6 +705,7 @@ class Stat:
         for offer_id, offer_data in offer_leads.items():
             for category in self.category.values():
                 if offer_id in category.offer:
+                    category.offer[offer_id].lead_container.leads_raw_count = offer_data['raw']
                     category.offer[offer_id].lead_container.leads_non_trash_count = offer_data['non_trash']
                     category.offer[offer_id].lead_container.leads_approved_count = offer_data['approved']
                     category.offer[offer_id].lead_container.leads_buyout_count = offer_data['buyout']

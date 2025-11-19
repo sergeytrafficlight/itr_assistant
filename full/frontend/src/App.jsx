@@ -4,6 +4,7 @@ import HomePage from './components/HomePage'
 import SheetsPage from './components/SheetsPage'
 import AnalyticsPage from './components/AnalyticsPage'
 import ReportsPage from './components/ReportsPage'
+import FullDataPage from './components/FullDataPage' // Импортируйте компонент
 import './App.css'
 
 function App() {
@@ -42,6 +43,10 @@ function App() {
             <Link to="/reports" className={location.pathname === '/reports' ? 'active' : ''}>
               📋 Отчеты
             </Link>
+            {/* Добавьте ссылку в навигацию если нужно */}
+            <Link to="/full-data" className={location.pathname === '/full-data' ? 'active' : ''}>
+              📋 Полные данные
+            </Link>
           </div>
           <div className="nav-actions">
             <button className="btn secondary" onClick={toggleTheme}>
@@ -57,6 +62,8 @@ function App() {
           <Route path="/sheets" element={<SheetsPage />} />
           <Route path="/analytics" element={<AnalyticsPage />} />
           <Route path="/reports" element={<ReportsPage toggleTheme={toggleTheme} theme={theme} />} />
+          {/* Добавьте этот маршрут */}
+          <Route path="/full-data" element={<FullDataPage />} />
         </Routes>
       </main>
     </div>

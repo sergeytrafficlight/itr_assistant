@@ -4,7 +4,6 @@ import { AgGridReact } from 'ag-grid-react'
 import 'ag-grid-community/styles/ag-grid.css'
 import 'ag-grid-community/styles/ag-theme-quartz.css'
 import { useNavigate } from 'react-router-dom'
-import FormulaEngine from '../utils/FormulaEngine'
 import './FullDataPage.css'
 
 const FullDataPage = () => {
@@ -23,14 +22,9 @@ const FullDataPage = () => {
     output: 'Все'
   })
   const [categories, setCategories] = useState([])
-  const formulaEngine = useRef(new FormulaEngine())
   const gridRef = useRef()
   const navigate = useNavigate()
 
-  // Вспомогательная функция для безопасного деления
-  const safeDiv = (a, b) => (b && b !== 0 ? a / b : 0)
-
-  // Загрузка категорий
   const loadCategories = async () => {
     try {
       const res = await axios.get('/api/legacy/filter-params/')
@@ -41,7 +35,6 @@ const FullDataPage = () => {
     }
   }
 
-  // Загрузка структурированных данных
   const loadStructuredData = useCallback(async () => {
     setLoading(true)
     setError('')
@@ -49,7 +42,6 @@ const FullDataPage = () => {
       const res = await axios.post('/api/kpi-analysis/full_structured_data/', filters)
       if (res.data.success) {
         setStructuredData(res.data.data || [])
-        // Преобразуем структурированные данные в плоский формат для таблицы
         const flatData = convertToFlatData(res.data.data || [])
         setRowData(flatData)
       } else {
@@ -63,20 +55,17 @@ const FullDataPage = () => {
     }
   }, [filters])
 
-  // Преобразование структурированных данных в плоский формат для AG-Grid
   const convertToFlatData = (structuredData) => {
     const flatData = []
     let rowIndex = 0
 
     structuredData.forEach(category => {
-      // Добавляем строку категории
       flatData.push({
         id: rowIndex++,
         level: 0,
         ...createCategoryRow(category)
       })
 
-      // Добавляем офферы
       category.offers?.forEach(offer => {
         flatData.push({
           id: rowIndex++,
@@ -85,7 +74,6 @@ const FullDataPage = () => {
         })
       })
 
-      // Добавляем операторов
       category.operators?.forEach(operator => {
         flatData.push({
           id: rowIndex++,
@@ -94,7 +82,6 @@ const FullDataPage = () => {
         })
       })
 
-      // Добавляем вебмастеров
       category.affiliates?.forEach(affiliate => {
         flatData.push({
           id: rowIndex++,
@@ -107,64 +94,44 @@ const FullDataPage = () => {
     return flatData
   }
 
-  // Создание строки категории
   const createCategoryRow = (category) => {
-    // Вычисляем проценты на клиенте, если их нет в данных
-    const approvePercent = category.approve_percent_fact ||
-      safeDiv(category.lead_container?.leads_approved_count || 0, category.lead_container?.leads_non_trash_count || 0) * 100
-
-    const buyoutPercent = category.buyout_percent_fact ||
-      safeDiv(category.lead_container?.leads_buyout_count || 0, category.lead_container?.leads_approved_count || 0) * 100
-
     return {
       type: 'Категория',
       description: category.description,
-
-      // Эффективность
       calls_effective: category.kpi_stat?.calls_group_effective_count || 0,
+      leads_raw: category.lead_container?.leads_raw_count || 0,
       leads_effective: category.kpi_stat?.leads_effective_count || 0,
       effective_percent: category.kpi_stat?.effective_percent || 0,
       effective_rate_fact: category.kpi_stat?.effective_rate || 0,
       effective_rate_plan: category.kpi_stat?.expecting_effective_rate || 0,
       effective_recommendation: category.recommended_efficiency?.value || null,
-      effective_correction_needed: category.kpi_eff_need_correction_str || '',
-
-      // Аппрувы
       leads_non_trash: category.lead_container?.leads_non_trash_count || 0,
       leads_approved: category.lead_container?.leads_approved_count || 0,
-      approve_percent_fact: approvePercent,
+      approve_percent_fact: category.approve_percent_fact || 0,
       approve_percent_plan: category.approve_rate_plan || 0,
       approve_recommendation: category.recommended_approve?.value || null,
-      approve_correction_needed: category.kpi_app_need_correction_str || '',
-
-      // Выкупы
       leads_buyout: category.lead_container?.leads_buyout_count || 0,
-      buyout_percent: buyoutPercent,
-      buyout_percent_fact: buyoutPercent,
+      buyout_percent_fact: category.buyout_percent_fact || 0,
       buyout_percent_plan: category.recommended_buyout?.value || null,
       buyout_recommendation: category.recommended_buyout?.value || null,
-      buyout_correction_needed: category.kpi_buyout_need_correction_str || '',
-
-      // Сводные рекомендации
+      trash_percent: category.trash_percent || 0,
+      raw_to_approve_percent: category.raw_to_approve_percent || 0,
+      raw_to_buyout_percent: category.raw_to_buyout_percent || 0,
+      non_trash_to_buyout_percent: category.non_trash_to_buyout_percent || 0,
       summary_effective_rec: category.recommended_efficiency?.value || null,
       summary_approve_rec: category.recommended_approve?.value || null,
       summary_buyout_rec: category.recommended_buyout?.value || null,
       summary_check_rec: category.recommended_confirmation_price?.value || null,
-
-      // Дополнительные поля
+      needs_efficiency_correction: category.needs_efficiency_correction || false,
+      needs_approve_correction: category.needs_approve_correction || false,
+      needs_buyout_correction: category.needs_buyout_correction || false,
       effective_update_date: category.kpi_current_plan?.operator_efficiency_update_date || '',
       approve_update_date: category.kpi_current_plan?.planned_approve_update_date || '',
       buyout_update_date: category.kpi_current_plan?.planned_buyout_update_date || '',
       plan_type: category.kpi_current_plan?.plan_type || '',
-
-      // Формулы
-      formula_efficiency: `=ЭФФЕКТИВНОСТЬ(${category.kpi_stat?.calls_group_effective_count || 0}, ${category.kpi_stat?.leads_effective_count || 0})`,
-      formula_approve: `=АППРУВ_ПРОЦЕНТ(${category.lead_container?.leads_approved_count || 0}, ${category.lead_container?.leads_non_trash_count || 0})`,
-      formula_buyout: `=ВЫКУП_ПРОЦЕНТ(${category.lead_container?.leads_buyout_count || 0}, ${category.lead_container?.leads_approved_count || 0})`
     }
   }
 
-  // Создание строки оффера
   const createOfferRow = (offer, category) => {
     const kpiPlan = offer.kpi_current_plan || {}
 
@@ -174,136 +141,104 @@ const FullDataPage = () => {
       offer_name: offer.description,
       description: offer.description,
       category: category.description,
-
-      // Эффективность
       calls_effective: offer.kpi_stat?.calls_group_effective_count || 0,
+      leads_raw: offer.lead_container?.leads_raw_count || 0,
       leads_effective: offer.kpi_stat?.leads_effective_count || 0,
       effective_percent: offer.kpi_stat?.effective_percent || 0,
       effective_rate_fact: offer.kpi_stat?.effective_rate || 0,
       effective_rate_plan: kpiPlan.operator_efficiency || 0,
       effective_recommendation: offer.recommended_efficiency?.value || null,
-      effective_correction_needed: offer.kpi_eff_need_correction_str || '',
-
-      // Аппрувы
       leads_non_trash: offer.lead_container?.leads_non_trash_count || 0,
       leads_approved: offer.lead_container?.leads_approved_count || 0,
-      approve_percent_fact: calculateApprovePercent(offer),
+      approve_percent_fact: offer.approve_percent_fact || 0,
       approve_percent_plan: kpiPlan.planned_approve || 0,
       approve_recommendation: offer.recommended_approve?.value || null,
-      approve_correction_needed: offer.kpi_app_need_correction_str || '',
-
-      // Выкупы
       leads_buyout: offer.lead_container?.leads_buyout_count || 0,
-      buyout_percent: calculateBuyoutPercent(offer),
-      buyout_percent_fact: calculateBuyoutPercent(offer),
+      buyout_percent_fact: offer.buyout_percent_fact || 0,
       buyout_percent_plan: kpiPlan.planned_buyout || 0,
       buyout_recommendation: offer.recommended_buyout?.value || null,
-      buyout_correction_needed: offer.kpi_buyout_need_correction_str || '',
-
-      // Сводные рекомендации
+      trash_percent: offer.trash_percent || 0,
+      raw_to_approve_percent: offer.raw_to_approve_percent || 0,
+      raw_to_buyout_percent: offer.raw_to_buyout_percent || 0,
+      non_trash_to_buyout_percent: offer.non_trash_to_buyout_percent || 0,
       summary_effective_rec: offer.recommended_efficiency?.value || null,
       summary_approve_rec: offer.recommended_approve?.value || null,
       summary_buyout_rec: offer.recommended_buyout?.value || null,
       summary_check_rec: offer.recommended_confirmation_price?.value || null,
-      summary_effective_corr: offer.kpi_eff_need_correction ? 'Да' : '',
-      summary_approve_corr: offer.kpi_app_need_correction ? 'Да' : '',
-      summary_buyout_corr: offer.kpi_buyout_need_correction ? 'Да' : '',
-      summary_check_corr: offer.kpi_confirmation_price_need_correction ? 'Да' : '',
-
-      // Дополнительные поля
+      needs_efficiency_correction: offer.needs_efficiency_correction || false,
+      needs_approve_correction: offer.needs_approve_correction || false,
+      needs_buyout_correction: offer.needs_buyout_correction || false,
+      needs_confirmation_price_correction: offer.needs_confirmation_price_correction || false,
       effective_update_date: kpiPlan.operator_efficiency_update_date || '',
       approve_update_date: kpiPlan.planned_approve_update_date || '',
       buyout_update_date: kpiPlan.planned_buyout_update_date || '',
       plan_type: kpiPlan.plan_type || '',
-
-      // Ссылка
       link: {
         url: `https://admin.crm.itvx.biz/partners/tloffer/${offer.key}/change/`,
         text: offer.key
       },
-
-      // Формулы
-      formula_efficiency: `=ЭФФЕКТИВНОСТЬ(${offer.kpi_stat?.calls_group_effective_count || 0}, ${offer.kpi_stat?.leads_effective_count || 0})`,
-      formula_approve: `=АППРУВ_ПРОЦЕНТ(${offer.lead_container?.leads_approved_count || 0}, ${offer.lead_container?.leads_non_trash_count || 0})`,
-      formula_buyout: `=ВЫКУП_ПРОЦЕНТ(${offer.lead_container?.leads_buyout_count || 0}, ${offer.lead_container?.leads_approved_count || 0})`,
-      formula_cr: `=CR(${offer.lead_container?.leads_approved_count || 0}, ${offer.kpi_stat?.calls_group_effective_count || 0})`
     }
   }
 
-  // Создание строки оператора
   const createOperatorRow = (operator) => {
     return {
       type: 'Оператор',
       operator_name: operator.description,
       description: operator.description,
-
-      // Эффективность
       calls_effective: operator.kpi_stat?.calls_group_effective_count || 0,
+      leads_raw: operator.lead_container?.leads_raw_count || 0,
       leads_effective: operator.kpi_stat?.leads_effective_count || 0,
       effective_percent: operator.kpi_stat?.effective_percent || 0,
       effective_rate_fact: operator.kpi_stat?.effective_rate || 0,
-
-      // Аппрувы
       leads_non_trash: operator.lead_container?.leads_non_trash_count || 0,
       leads_approved: operator.lead_container?.leads_approved_count || 0,
-      approve_percent_fact: calculateApprovePercent(operator),
-
-      // Выкупы
+      approve_percent_fact: operator.approve_percent_fact || 0,
       leads_buyout: operator.lead_container?.leads_buyout_count || 0,
-      buyout_percent: calculateBuyoutPercent(operator),
-
-      // Формулы
-      formula_efficiency: `=ЭФФЕКТИВНОСТЬ(${operator.kpi_stat?.calls_group_effective_count || 0}, ${operator.kpi_stat?.leads_effective_count || 0})`,
-      formula_approve: `=АППРУВ_ПРОЦЕНТ(${operator.lead_container?.leads_approved_count || 0}, ${operator.lead_container?.leads_non_trash_count || 0})`,
-      formula_buyout: `=ВЫКУП_ПРОЦЕНТ(${operator.lead_container?.leads_buyout_count || 0}, ${operator.lead_container?.leads_approved_count || 0})`
+      buyout_percent_fact: operator.buyout_percent_fact || 0,
+      trash_percent: operator.trash_percent || 0,
+      raw_to_approve_percent: operator.raw_to_approve_percent || 0,
+      raw_to_buyout_percent: operator.raw_to_buyout_percent || 0,
+      non_trash_to_buyout_percent: operator.non_trash_to_buyout_percent || 0,
+      recommended_efficiency: operator.recommended_efficiency?.value || null,
+      recommended_approve: operator.recommended_approve?.value || null,
+      recommended_buyout: operator.recommended_buyout?.value || null,
+      recommended_confirmation_price: operator.recommended_confirmation_price?.value || null,
+      needs_efficiency_correction: operator.needs_efficiency_correction || false,
+      needs_approve_correction: operator.needs_approve_correction || false,
+      needs_buyout_correction: operator.needs_buyout_correction || false,
     }
   }
 
-  // Создание строки вебмастера
   const createAffiliateRow = (affiliate) => {
     return {
       type: 'Вебмастер',
       aff_id: affiliate.key,
       description: `Веб #${affiliate.key}`,
-
-      // Эффективность
       calls_effective: affiliate.kpi_stat?.calls_group_effective_count || 0,
+      leads_raw: affiliate.lead_container?.leads_raw_count || 0,
       leads_effective: affiliate.kpi_stat?.leads_effective_count || 0,
       effective_percent: affiliate.kpi_stat?.effective_percent || 0,
       effective_rate_fact: affiliate.kpi_stat?.effective_rate || 0,
-
-      // Аппрувы
       leads_non_trash: affiliate.lead_container?.leads_non_trash_count || 0,
       leads_approved: affiliate.lead_container?.leads_approved_count || 0,
-      approve_percent_fact: calculateApprovePercent(affiliate),
-
-      // Выкупы
+      approve_percent_fact: affiliate.approve_percent_fact || 0,
       leads_buyout: affiliate.lead_container?.leads_buyout_count || 0,
-      buyout_percent: calculateBuyoutPercent(affiliate),
-
-      // Формулы
-      formula_efficiency: `=ЭФФЕКТИВНОСТЬ(${affiliate.kpi_stat?.calls_group_effective_count || 0}, ${affiliate.kpi_stat?.leads_effective_count || 0})`,
-      formula_approve: `=АППРУВ_ПРОЦЕНТ(${affiliate.lead_container?.leads_approved_count || 0}, ${affiliate.lead_container?.leads_non_trash_count || 0})`,
-      formula_buyout: `=ВЫКУП_ПРОЦЕНТ(${affiliate.lead_container?.leads_buyout_count || 0}, ${affiliate.lead_container?.leads_approved_count || 0})`
+      buyout_percent_fact: affiliate.buyout_percent_fact || 0,
+      trash_percent: affiliate.trash_percent || 0,
+      raw_to_approve_percent: affiliate.raw_to_approve_percent || 0,
+      raw_to_buyout_percent: affiliate.raw_to_buyout_percent || 0,
+      non_trash_to_buyout_percent: affiliate.non_trash_to_buyout_percent || 0,
+      recommended_efficiency: affiliate.recommended_efficiency?.value || null,
+      recommended_approve: affiliate.recommended_approve?.value || null,
+      recommended_buyout: affiliate.recommended_buyout?.value || null,
+      recommended_confirmation_price: affiliate.recommended_confirmation_price?.value || null,
+      needs_efficiency_correction: affiliate.needs_efficiency_correction || false,
+      needs_approve_correction: affiliate.needs_approve_correction || false,
+      needs_buyout_correction: affiliate.needs_buyout_correction || false,
     }
   }
 
-  // Вспомогательные функции для расчетов
-  const calculateApprovePercent = (item) => {
-    const nonTrash = item.lead_container?.leads_non_trash_count || 0
-    const approved = item.lead_container?.leads_approved_count || 0
-    return safeDiv(approved, nonTrash) * 100
-  }
-
-  const calculateBuyoutPercent = (item) => {
-    const approved = item.lead_container?.leads_approved_count || 0
-    const buyout = item.lead_container?.leads_buyout_count || 0
-    return safeDiv(buyout, approved) * 100
-  }
-
-  // Колонки для всех данных
   const columnDefs = [
-    // Блок 1: Основная информация
     {
       headerName: "Тип данных",
       field: "type",
@@ -323,8 +258,6 @@ const FullDataPage = () => {
     { headerName: "ID Вебмастер", field: "aff_id", width: 120 },
     { headerName: "Оператор", field: "operator_name", width: 150 },
     { headerName: "Категория", field: "category", width: 150 },
-
-    // Блок 2: Эффективность
     {
       headerName: "Ко-во звонков (эфф)",
       field: "calls_effective",
@@ -332,9 +265,15 @@ const FullDataPage = () => {
       type: 'numericColumn'
     },
     {
-      headerName: "Ко-во продаж (эфф)",
+      headerName: "Лиды",
+      field: "leads_raw",
+      width: 110,
+      type: 'numericColumn'
+    },
+    {
+      headerName: "Продажи",
       field: "leads_effective",
-      width: 140,
+      width: 110,
       type: 'numericColumn'
     },
     {
@@ -348,8 +287,6 @@ const FullDataPage = () => {
       })
     },
     { headerName: "", field: "blank1", width: 50 },
-
-    // Блок 3: Эффективность план/факт
     {
       headerName: "Эфф. факт",
       field: "effective_rate_fact",
@@ -374,14 +311,15 @@ const FullDataPage = () => {
       valueFormatter: p => p.value?.toFixed(2) || '-'
     },
     {
-      headerName: "Требуется коррекция",
-      field: "effective_correction_needed",
-      width: 140,
-      cellStyle: params => params.value ? { color: '#ef4444', fontWeight: 'bold' } : null
+      headerName: "Коррекция эфф.",
+      field: "needs_efficiency_correction",
+      width: 120,
+      cellRenderer: params => params.value ? '❌ Требует' : '✅ OK',
+      cellStyle: params => params.value ?
+        { backgroundColor: '#ffebee', color: '#c62828' } :
+        { backgroundColor: '#e8f5e8', color: '#2e7d32' }
     },
     { headerName: "", field: "blank2", width: 50 },
-
-    // Блок 4: Аппрувы
     {
       headerName: "Ко-во лидов (без треша)",
       field: "leads_non_trash",
@@ -417,21 +355,15 @@ const FullDataPage = () => {
     },
     { headerName: "Дата обновления аппрув", field: "approve_update_date", width: 140 },
     {
-      headerName: "Требуется коррекция аппрув",
-      field: "approve_correction_needed",
-      width: 180,
-      cellStyle: params => params.value ? { color: '#ef4444', fontWeight: 'bold' } : null
+      headerName: "Коррекция аппрув",
+      field: "needs_approve_correction",
+      width: 120,
+      cellRenderer: params => params.value ? '❌ Требует' : '✅ OK',
+      cellStyle: params => params.value ?
+        { backgroundColor: '#ffebee', color: '#c62828' } :
+        { backgroundColor: '#e8f5e8', color: '#2e7d32' }
     },
     { headerName: "", field: "blank3", width: 50 },
-
-    // Блок 5: Выкупы
-    {
-      headerName: "% выкупа",
-      field: "buyout_percent",
-      width: 100,
-      type: 'numericColumn',
-      valueFormatter: p => p.value ? `${p.value.toFixed(1)}%` : '0%'
-    },
     {
       headerName: "Ко-во выкупов",
       field: "leads_buyout",
@@ -461,24 +393,47 @@ const FullDataPage = () => {
     },
     { headerName: "Дата обновления выкупа", field: "buyout_update_date", width: 140 },
     {
-      headerName: "Требуется коррекция выкупа",
-      field: "buyout_correction_needed",
-      width: 180,
-      cellStyle: params => params.value ? { color: '#ef4444', fontWeight: 'bold' } : null
+      headerName: "Коррекция выкуп",
+      field: "needs_buyout_correction",
+      width: 120,
+      cellRenderer: params => params.value ? '❌ Требует' : '✅ OK',
+      cellStyle: params => params.value ?
+        { backgroundColor: '#ffebee', color: '#c62828' } :
+        { backgroundColor: '#e8f5e8', color: '#2e7d32' }
     },
-
-    // Блок 6: Сводные рекомендации
+    {
+      headerName: "% Треш",
+      field: "trash_percent",
+      width: 100,
+      type: 'numericColumn',
+      valueFormatter: p => p.value ? `${p.value.toFixed(1)}%` : '0%'
+    },
+    {
+      headerName: "% Аппрув от сырых",
+      field: "raw_to_approve_percent",
+      width: 140,
+      type: 'numericColumn',
+      valueFormatter: p => p.value ? `${p.value.toFixed(1)}%` : '0%'
+    },
+    {
+      headerName: "% Выкуп от сырых",
+      field: "raw_to_buyout_percent",
+      width: 140,
+      type: 'numericColumn',
+      valueFormatter: p => p.value ? `${p.value.toFixed(1)}%` : '0%'
+    },
+    {
+      headerName: "% Выкуп от нетреша",
+      field: "non_trash_to_buyout_percent",
+      width: 150,
+      type: 'numericColumn',
+      valueFormatter: p => p.value ? `${p.value.toFixed(1)}%` : '0%'
+    },
     {
       headerName: "Эфф. Рек.",
       field: "summary_effective_rec",
       width: 100,
       type: 'numericColumn'
-    },
-    {
-      headerName: "Коррекция?",
-      field: "summary_effective_corr",
-      width: 100,
-      cellStyle: params => params.value ? { color: '#ef4444', fontWeight: 'bold' } : null
     },
     {
       headerName: "Апп. Рек.",
@@ -487,22 +442,10 @@ const FullDataPage = () => {
       type: 'numericColumn'
     },
     {
-      headerName: "Коррекция?",
-      field: "summary_approve_corr",
-      width: 100,
-      cellStyle: params => params.value ? { color: '#ef4444', fontWeight: 'bold' } : null
-    },
-    {
       headerName: "Чек Рек.",
       field: "summary_check_rec",
       width: 100,
       type: 'numericColumn'
-    },
-    {
-      headerName: "Коррекция?",
-      field: "summary_check_corr",
-      width: 100,
-      cellStyle: params => params.value ? { color: '#ef4444', fontWeight: 'bold' } : null
     },
     {
       headerName: "Выкуп. Рек.",
@@ -510,34 +453,6 @@ const FullDataPage = () => {
       width: 100,
       type: 'numericColumn'
     },
-    {
-      headerName: "Коррекция?",
-      field: "summary_buyout_corr",
-      width: 100,
-      cellStyle: params => params.value ? { color: '#ef4444', fontWeight: 'bold' } : null
-    },
-
-    // Блок 7: Формулы
-    {
-      headerName: "Формула эфф.",
-      field: "formula_efficiency",
-      width: 200,
-      tooltipField: "formula_efficiency"
-    },
-    {
-      headerName: "Формула аппрув",
-      field: "formula_approve",
-      width: 200,
-      tooltipField: "formula_approve"
-    },
-    {
-      headerName: "Формула выкуп",
-      field: "formula_buyout",
-      width: 200,
-      tooltipField: "formula_buyout"
-    },
-
-    // Блок 8: Ссылки
     {
       headerName: "Ссылка",
       field: "link",
@@ -602,7 +517,7 @@ const FullDataPage = () => {
           <button onClick={() => navigate('/analytics')} className="btn back-btn">
             ← Назад к аналитике
           </button>
-          <h1>Полные данные KPI с формулами</h1>
+          <h1>Полные данные KPI</h1>
           <button onClick={exportToCSV} className="btn primary">
             Экспорт в CSV
           </button>

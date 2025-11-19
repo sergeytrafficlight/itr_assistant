@@ -30,7 +30,6 @@ const AnalyticsPage = () => {
   const filterDebounce = useRef(null)
   const navigate = useNavigate()
 
-  // === ЗАГРУЗКА КАТЕГОРИЙ ===
   const loadCategories = async () => {
     try {
       const res = await axios.get('/api/legacy/filter-params/')
@@ -41,7 +40,6 @@ const AnalyticsPage = () => {
     }
   }
 
-  // === АНАЛИЗ ===
   const loadAdvancedAnalysis = useCallback(async () => {
     if (cancelToken.current) cancelToken.current.cancel('Отмена предыдущего запроса')
     cancelToken.current = axios.CancelToken.source()
@@ -56,7 +54,6 @@ const AnalyticsPage = () => {
         setRecommendations(res.data.recommendations || [])
         setPerformance(res.data.performance || {})
 
-        // Группировка
         if (res.data.groups && gridRef.current?.api) {
           setTimeout(() => {
             res.data.groups.forEach(g => {
@@ -80,7 +77,6 @@ const AnalyticsPage = () => {
     }
   }, [filters])
 
-  // === ДАННЫЕ ДЛЯ ГРИДА ===
   const getRowData = useCallback(() => {
     if (!advancedData.length) return []
     const rows = []
@@ -92,6 +88,7 @@ const AnalyticsPage = () => {
         type: 'category',
         description: cat.description,
         calls_effective: cat.kpi_stat?.calls_group_effective_count || 0,
+        leads_raw: cat.lead_container?.leads_raw_count || 0,
         leads_effective: cat.kpi_stat?.leads_effective_count || 0,
         effective_percent: cat.kpi_stat?.effective_percent || 0,
         effective_rate: cat.kpi_stat?.effective_rate || 0,
@@ -102,6 +99,10 @@ const AnalyticsPage = () => {
         approve_rate_plan: cat.approve_rate_plan || 0,
         leads_buyout: cat.lead_container?.leads_buyout_count || 0,
         buyout_percent_fact: cat.buyout_percent_fact || 0,
+        trash_percent: cat.trash_percent || 0,
+        raw_to_approve_percent: cat.raw_to_approve_percent || 0,
+        raw_to_buyout_percent: cat.raw_to_buyout_percent || 0,
+        non_trash_to_buyout_percent: cat.non_trash_to_buyout_percent || 0,
       })
 
       cat.offers?.forEach(offer => {
@@ -112,14 +113,19 @@ const AnalyticsPage = () => {
           offer_name: offer.description,
           offer_id: offer.key,
           calls_effective: offer.kpi_stat?.calls_group_effective_count || 0,
+          leads_raw: offer.lead_container?.leads_raw_count || 0,
           leads_effective: offer.kpi_stat?.leads_effective_count || 0,
           effective_percent: offer.kpi_stat?.effective_percent || 0,
           effective_rate: offer.kpi_stat?.effective_rate || 0,
           leads_non_trash: offer.lead_container?.leads_non_trash_count || 0,
           leads_approved: offer.lead_container?.leads_approved_count || 0,
-          approve_percent_fact: safeDiv(offer.lead_container?.leads_approved_count, offer.lead_container?.leads_non_trash_count) * 100 || 0,
+          approve_percent_fact: offer.approve_percent_fact || 0,
           leads_buyout: offer.lead_container?.leads_buyout_count || 0,
-          buyout_percent_fact: safeDiv(offer.lead_container?.leads_buyout_count, offer.lead_container?.leads_approved_count) * 100 || 0,
+          buyout_percent_fact: offer.buyout_percent_fact || 0,
+          trash_percent: offer.trash_percent || 0,
+          raw_to_approve_percent: offer.raw_to_approve_percent || 0,
+          raw_to_buyout_percent: offer.raw_to_buyout_percent || 0,
+          non_trash_to_buyout_percent: offer.non_trash_to_buyout_percent || 0,
         })
       })
 
@@ -130,9 +136,19 @@ const AnalyticsPage = () => {
           description: op.key,
           operator_name: op.key,
           calls_effective: op.kpi_stat?.calls_group_effective_count || 0,
+          leads_raw: op.lead_container?.leads_raw_count || 0,
           leads_effective: op.kpi_stat?.leads_effective_count || 0,
           effective_percent: op.kpi_stat?.effective_percent || 0,
           effective_rate: op.kpi_stat?.effective_rate || 0,
+          leads_non_trash: op.lead_container?.leads_non_trash_count || 0,
+          leads_approved: op.lead_container?.leads_approved_count || 0,
+          approve_percent_fact: op.approve_percent_fact || 0,
+          leads_buyout: op.lead_container?.leads_buyout_count || 0,
+          buyout_percent_fact: op.buyout_percent_fact || 0,
+          trash_percent: op.trash_percent || 0,
+          raw_to_approve_percent: op.raw_to_approve_percent || 0,
+          raw_to_buyout_percent: op.raw_to_buyout_percent || 0,
+          non_trash_to_buyout_percent: op.non_trash_to_buyout_percent || 0,
         })
       })
 
@@ -143,9 +159,19 @@ const AnalyticsPage = () => {
           description: `Веб #${aff.key}`,
           aff_id: aff.key,
           calls_effective: aff.kpi_stat?.calls_group_effective_count || 0,
+          leads_raw: aff.lead_container?.leads_raw_count || 0,
           leads_effective: aff.kpi_stat?.leads_effective_count || 0,
           effective_percent: aff.kpi_stat?.effective_percent || 0,
           effective_rate: aff.kpi_stat?.effective_rate || 0,
+          leads_non_trash: aff.lead_container?.leads_non_trash_count || 0,
+          leads_approved: aff.lead_container?.leads_approved_count || 0,
+          approve_percent_fact: aff.approve_percent_fact || 0,
+          leads_buyout: aff.lead_container?.leads_buyout_count || 0,
+          buyout_percent_fact: aff.buyout_percent_fact || 0,
+          trash_percent: aff.trash_percent || 0,
+          raw_to_approve_percent: aff.raw_to_approve_percent || 0,
+          raw_to_buyout_percent: aff.raw_to_buyout_percent || 0,
+          non_trash_to_buyout_percent: aff.non_trash_to_buyout_percent || 0,
         })
       })
     })
@@ -153,38 +179,12 @@ const AnalyticsPage = () => {
     return rows
   }, [advancedData])
 
-  // Вспомогательная функция для безопасного деления
-  const safeDiv = (a, b) => b ? a / b : 0
-
-  // === useEffect при монтировании ===
-  useEffect(() => {
-    const init = async () => {
-      await loadCategories()
-      await loadAdvancedAnalysis()
-    }
-    init()
-  }, [loadAdvancedAnalysis])
-
-  // === useEffect при изменении фильтров с дебаунсом ===
-  useEffect(() => {
-    if (firstRender.current) {
-      firstRender.current = false
-      return
-    }
-    if (filterDebounce.current) clearTimeout(filterDebounce.current)
-    filterDebounce.current = setTimeout(() => {
-      loadAdvancedAnalysis()
-    }, 500)
-
-    return () => clearTimeout(filterDebounce.current)
-  }, [filters, loadAdvancedAnalysis])
-
-  // === КОЛОНКИ ===
   const columnDefs = [
     { headerName: "Тип", field: "type", rowGroup: filters.group_rows === 'Да', hide: true },
     { headerName: "Описание", field: "description", pinned: 'left', width: 220 },
     { headerName: "Звонки", field: "calls_effective", type: 'numericColumn', width: 110 },
-    { headerName: "Лиды", field: "leads_effective", type: 'numericColumn', width: 110 },
+    { headerName: "Лиды", field: "leads_raw", type: 'numericColumn', width: 110 },
+    { headerName: "Продажи", field: "leads_effective", type: 'numericColumn', width: 110 },
     {
       headerName: "% Эфф.",
       field: "effective_percent",
@@ -204,6 +204,10 @@ const AnalyticsPage = () => {
     { headerName: "План аппрув", field: "approve_rate_plan", type: 'numericColumn', width: 120, valueFormatter: p => p.value ? p.value.toFixed(1) + '%' : '-' },
     { headerName: "Выкупы", field: "leads_buyout", type: 'numericColumn', width: 110 },
     { headerName: "% Выкуп", field: "buyout_percent_fact", type: 'numericColumn', width: 120, valueFormatter: p => p.value ? p.value.toFixed(1) + '%' : '0%' },
+    { headerName: "% Треш", field: "trash_percent", type: 'numericColumn', width: 100, valueFormatter: p => p.value ? p.value.toFixed(1) + '%' : '0%' },
+    { headerName: "% Аппрув от сырых", field: "raw_to_approve_percent", type: 'numericColumn', width: 140, valueFormatter: p => p.value ? p.value.toFixed(1) + '%' : '0%' },
+    { headerName: "% Выкуп от сырых", field: "raw_to_buyout_percent", type: 'numericColumn', width: 140, valueFormatter: p => p.value ? p.value.toFixed(1) + '%' : '0%' },
+    { headerName: "% Выкуп от нетреша", field: "non_trash_to_buyout_percent", type: 'numericColumn', width: 150, valueFormatter: p => p.value ? p.value.toFixed(1) + '%' : '0%' },
   ]
 
   const exportToCSV = () => {
@@ -227,6 +231,27 @@ const AnalyticsPage = () => {
       group_rows: 'Нет'
     })
   }
+
+  useEffect(() => {
+    const init = async () => {
+      await loadCategories()
+      await loadAdvancedAnalysis()
+    }
+    init()
+  }, [loadAdvancedAnalysis])
+
+  useEffect(() => {
+    if (firstRender.current) {
+      firstRender.current = false
+      return
+    }
+    if (filterDebounce.current) clearTimeout(filterDebounce.current)
+    filterDebounce.current = setTimeout(() => {
+      loadAdvancedAnalysis()
+    }, 500)
+
+    return () => clearTimeout(filterDebounce.current)
+  }, [filters, loadAdvancedAnalysis])
 
   return (
     <div className="analytics-page">
@@ -307,15 +332,17 @@ const AnalyticsPage = () => {
           <h3>💡 Рекомендации</h3>
           <div className="recommendations-grid">
             {recommendations.map((rec, i) => (
-              <div key={i} className="recommendation-card">
+              <div key={i} className={`recommendation-card ${rec.priority}`}>
                 <div className="rec-header">
-                  <span className="rec-type">{rec.type === 'efficiency' ? 'Эффективность' : 'Аппрув'}</span>
+                  <span className="rec-icon">{rec.icon}</span>
+                  <span className="rec-type">{rec.type}</span>
                   <span className="rec-category">{rec.category}</span>
                 </div>
                 <div className="rec-values">
-                  <span className="current">{rec.current}%</span>
+                  <span className="current">{rec.current}</span>
                   <span className="arrow">→</span>
-                  <span className="recommended">{rec.recommended}%</span>
+                  <span className="recommended">{rec.recommended}</span>
+                  <span className="difference">{rec.difference}</span>
                 </div>
                 {rec.comment && <div className="rec-comment">{rec.comment}</div>}
               </div>

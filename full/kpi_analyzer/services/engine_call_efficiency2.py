@@ -74,7 +74,7 @@ class Call:
                     self.billsec_exact = self.billsec
             except (ValueError, TypeError):
                 self.billsec_exact = self.billsec
-        if self.billsec_exact and self.billsec_exact < self.billsec:
+        if self.billsec_exact is not None and self.billsec_exact < self.billsec:
             self.billsec = self.billsec_exact
         self.operator_id = r.get('call_eff_operator_id')
         self.crm_lead_id = r.get('call_eff_crm_lead_id')
@@ -193,12 +193,10 @@ class KpiList:
         if key not in l:
             return None
         items = l[key]
-        # Конвертируем переданную дату для сравнения
         normalized_period_date = self._normalize_date(period_date)
         if normalized_period_date is None:
             return None
         for i in range(len(items) - 1, -1, -1):
-            # Конвертируем дату KPI для сравнения
             kpi_date = self._normalize_date(items[i].period_date)
             if kpi_date is None:
                 continue
