@@ -4,14 +4,14 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App.jsx'
 import './index.css'
 
-// Инициализация темы
+
 const savedTheme = localStorage.getItem('theme') || 'dark'
 document.documentElement.setAttribute('data-theme', savedTheme)
 
-// РЕГИСТРАЦИЯ ВСЕХ МОДУЛЕЙ AG-GRID
+
 import { ModuleRegistry } from 'ag-grid-community'
 
-// Импортируем модули из вашего файла
+
 import { ClientSideRowModelModule } from 'ag-grid-community'
 import { CsvExportModule } from 'ag-grid-community'
 import { InfiniteRowModelModule } from 'ag-grid-community'
@@ -35,6 +35,7 @@ import { RowStyleModule } from 'ag-grid-community'
 import { TooltipModule } from 'ag-grid-community'
 import { RowAutoHeightModule } from 'ag-grid-community'
 import { DragAndDropModule } from 'ag-grid-community'
+
 
 ModuleRegistry.registerModules([
   ClientSideRowModelModule,
@@ -62,7 +63,7 @@ ModuleRegistry.registerModules([
   DragAndDropModule
 ])
 
-// Рендер
+
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <BrowserRouter>

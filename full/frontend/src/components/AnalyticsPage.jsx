@@ -11,6 +11,7 @@ const AnalyticsPage = () => {
   const [recommendations, setRecommendations] = useState([])
   const [performance, setPerformance] = useState({})
   const [categories, setCategories] = useState([])
+  const [advertisers, setAdvertisers] = useState([])
   const [filters, setFilters] = useState({
     date_from: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     date_to: new Date().toISOString().split('T')[0],
@@ -30,13 +31,15 @@ const AnalyticsPage = () => {
   const filterDebounce = useRef(null)
   const navigate = useNavigate()
 
-  const loadCategories = async () => {
+  const loadCategoriesAndAdvertisers = async () => {
     try {
       const res = await axios.get('/api/legacy/filter-params/')
       const cats = res.data.available_filters?.categories || []
+      const advs = res.data.available_filters?.advertisers || []
       setCategories(cats)
+      setAdvertisers(advs)
     } catch (err) {
-      console.error('Ошибка загрузки категорий:', err)
+      console.error('Ошибка загрузки категорий и advertisers:', err)
     }
   }
 
@@ -48,7 +51,24 @@ const AnalyticsPage = () => {
     setError('')
 
     try {
-      const res = await axios.post('/api/kpi/advanced_analysis/', filters, { cancelToken: cancelToken.current.token })
+      // Преобразуем фильтры для сервера
+      const requestFilters = {
+        date_from: filters.date_from,
+        date_to: filters.date_to,
+        category: filters.category ? [filters.category] : [],
+        offer_id: filters.offer_id ? [filters.offer_id] : [],
+        aff_id: filters.aff_id ? [filters.aff_id] : [],
+        advertiser: filters.advertiser ? [filters.advertiser] : [],
+        output: filters.output,
+        group_rows: filters.group_rows
+      }
+      
+      // Добавляем lv_op если есть operator_name
+      if (filters.operator_name) {
+        requestFilters.lv_op = [filters.operator_name.toLowerCase()]
+      }
+
+      const res = await axios.post('/api/kpi/advanced_analysis/', requestFilters, { cancelToken: cancelToken.current.token })
       if (res.data.success) {
         setAdvancedData(res.data.data || [])
         setRecommendations(res.data.recommendations || [])
@@ -83,6 +103,20 @@ const AnalyticsPage = () => {
     let rowId = 0
 
     advancedData.forEach(cat => {
+      // Фильтрация по output
+      if (filters.output === 'Есть активность') {
+        const hasCalls = cat.kpi_stat?.calls_group_effective_count > 0
+        const hasLeads = cat.lead_container?.leads_non_trash_count > 0
+        if (!hasCalls && !hasLeads) {
+          return
+        }
+      }
+
+      // Фильтрация по категории
+      if (filters.category && cat.description !== filters.category) {
+        return
+      }
+
       rows.push({
         id: rowId++,
         type: 'category',
@@ -106,6 +140,15 @@ const AnalyticsPage = () => {
       })
 
       cat.offers?.forEach(offer => {
+        // Фильтрация по output для офферов
+        if (filters.output === 'Есть активность') {
+          const hasCalls = offer.kpi_stat?.calls_group_effective_count > 0
+          const hasLeads = offer.lead_container?.leads_non_trash_count > 0
+          if (!hasCalls && !hasLeads) {
+            return
+          }
+        }
+
         rows.push({
           id: rowId++,
           type: 'offer',
@@ -130,6 +173,15 @@ const AnalyticsPage = () => {
       })
 
       cat.operators?.forEach(op => {
+        // Фильтрация по output для операторов
+        if (filters.output === 'Есть активность') {
+          const hasCalls = op.kpi_stat?.calls_group_effective_count > 0
+          const hasLeads = op.lead_container?.leads_non_trash_count > 0
+          if (!hasCalls && !hasLeads) {
+            return
+          }
+        }
+
         rows.push({
           id: rowId++,
           type: 'operator',
@@ -153,6 +205,15 @@ const AnalyticsPage = () => {
       })
 
       cat.affiliates?.forEach(aff => {
+        // Фильтрация по output для вебмастеров
+        if (filters.output === 'Есть активность') {
+          const hasCalls = aff.kpi_stat?.calls_group_effective_count > 0
+          const hasLeads = aff.lead_container?.leads_non_trash_count > 0
+          if (!hasCalls && !hasLeads) {
+            return
+          }
+        }
+
         rows.push({
           id: rowId++,
           type: 'affiliate',
@@ -177,7 +238,7 @@ const AnalyticsPage = () => {
     })
 
     return rows
-  }, [advancedData])
+  }, [advancedData, filters.output, filters.category])
 
   const columnDefs = [
     { headerName: "Тип", field: "type", rowGroup: filters.group_rows === 'Да', hide: true },
@@ -234,7 +295,7 @@ const AnalyticsPage = () => {
 
   useEffect(() => {
     const init = async () => {
-      await loadCategories()
+      await loadCategoriesAndAdvertisers()
       await loadAdvancedAnalysis()
     }
     init()
@@ -302,7 +363,10 @@ const AnalyticsPage = () => {
           </div>
           <div className="filter-group">
             <label>Advertiser:</label>
-            <input type="text" placeholder="Advertiser" value={filters.advertiser} onChange={e => setFilters({...filters, advertiser: e.target.value.toLowerCase()})} />
+            <select value={filters.advertiser} onChange={e => setFilters({...filters, advertiser: e.target.value})}>
+              <option value="">Все advertisers</option>
+              {advertisers.map(adv => <option key={adv} value={adv}>{adv}</option>)}
+            </select>
           </div>
           <div className="filter-group">
             <label>Оператор:</label>
