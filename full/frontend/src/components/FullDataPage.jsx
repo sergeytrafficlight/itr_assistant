@@ -1,16 +1,20 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react'
-import axios from 'axios'
-import { AgGridReact } from 'ag-grid-react'
-import 'ag-grid-community/styles/ag-grid.css'
-import 'ag-grid-community/styles/ag-theme-quartz.css'
-import { useNavigate } from 'react-router-dom'
-import './FullDataPage.css'
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { AgGridReact } from 'ag-grid-react';
+import 'ag-grid-community/styles/ag-grid.css';
+import 'ag-grid-community/styles/ag-theme-quartz.css';
+import { useNavigate } from 'react-router-dom';
+import { legacyAPI, kpiAPI } from '../api/admin';
+import { useAuth } from '../contexts/AuthContext';
+import './FullDataPage.css';
 
 const FullDataPage = () => {
-  const [structuredData, setStructuredData] = useState([])
-  const [rowData, setRowData] = useState([])
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
+  const [structuredData, setStructuredData] = useState([]);
+  const [rowData, setRowData] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [expandedCategories, setExpandedCategories] = useState(new Set());
+  const { user, isLoading: authLoading } = useAuth();
+
   const [filters, setFilters] = useState({
     date_from: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     date_to: new Date().toISOString().split('T')[0],
@@ -20,42 +24,59 @@ const FullDataPage = () => {
     aff_id: '',
     advertiser: '',
     output: 'Все'
-  })
-  const [categories, setCategories] = useState([])
-  const gridRef = useRef()
-  const navigate = useNavigate()
+  });
 
-  const loadCategories = async () => {
+  const [categories, setCategories] = useState([]);
+  const [advertisers, setAdvertisers] = useState([]);
+  const gridRef = useRef();
+  const navigate = useNavigate();
+
+  const loadCategoriesAndAdvertisers = useCallback(async () => {
+    if (!user) return;
+
     try {
-      const res = await axios.get('/api/legacy/filter-params/')
-      const cats = res.data.available_filters?.categories || []
-      setCategories(cats)
+      const res = await legacyAPI.getFilterParams();
+      setCategories(res.data.available_filters?.categories || []);
+      setAdvertisers(res.data.available_filters?.advertisers || []);
     } catch (err) {
-      console.error('Ошибка загрузки категорий:', err)
+      console.error('Ошибка загрузки фильтров:', err);
     }
-  }
+  }, [user]);
 
   const loadStructuredData = useCallback(async () => {
-    setLoading(true)
-    setError('')
+    if (!user) return;
+
+    setLoading(true);
+    setError('');
     try {
-      const res = await axios.post('/api/kpi-analysis/full_structured_data/', filters)
+      const res = await kpiAPI.fullStructuredData(filters);
       if (res.data.success) {
-        setStructuredData(res.data.data || [])
-        const flatData = convertToFlatData(res.data.data || [])
-        setRowData(flatData)
+        setStructuredData(res.data.data || []);
+        setExpandedCategories(new Set());
       } else {
-        setError(res.data.error || 'Ошибка загрузки данных')
+        setError(res.data.error || 'Ошибка загрузки данных');
       }
     } catch (err) {
-      setError(err.response?.data?.error || 'Сервер недоступен')
-      console.error('Ошибка запроса:', err)
+      setError('Сервер недоступен или сессия истекла');
+      console.error('Ошибка загрузки структурированных данных:', err);
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }, [filters])
+  }, [filters, user]);
 
-  const convertToFlatData = (structuredData) => {
+  const toggleCategory = useCallback((categoryDescription) => {
+    setExpandedCategories(prev => {
+      const newSet = new Set(prev)
+      if (newSet.has(categoryDescription)) {
+        newSet.delete(categoryDescription)
+      } else {
+        newSet.add(categoryDescription)
+      }
+      return newSet
+    })
+  }, [])
+
+  const convertToFlatData = useCallback((structuredData, expandedSet) => {
     const flatData = []
     let rowIndex = 0
 
@@ -63,36 +84,51 @@ const FullDataPage = () => {
       flatData.push({
         id: rowIndex++,
         level: 0,
+        isCategory: true,
+        isExpanded: expandedSet.has(category.description),
         ...createCategoryRow(category)
       })
 
-      category.offers?.forEach(offer => {
-        flatData.push({
-          id: rowIndex++,
-          level: 1,
-          ...createOfferRow(offer, category)
+      if (expandedSet.has(category.description)) {
+        category.offers?.forEach(offer => {
+          flatData.push({
+            id: rowIndex++,
+            level: 1,
+            type: 'Оффер',
+            parentCategory: category.description,
+            ...createOfferRow(offer, category)
+          })
         })
-      })
 
-      category.operators?.forEach(operator => {
-        flatData.push({
-          id: rowIndex++,
-          level: 1,
-          ...createOperatorRow(operator)
+        category.operators?.forEach(operator => {
+          flatData.push({
+            id: rowIndex++,
+            level: 1,
+            type: 'Оператор',
+            parentCategory: category.description,
+            ...createOperatorRow(operator)
+          })
         })
-      })
 
-      category.affiliates?.forEach(affiliate => {
-        flatData.push({
-          id: rowIndex++,
-          level: 1,
-          ...createAffiliateRow(affiliate)
+        category.affiliates?.forEach(affiliate => {
+          flatData.push({
+            id: rowIndex++,
+            level: 1,
+            type: 'Вебмастер',
+            parentCategory: category.description,
+            ...createAffiliateRow(affiliate)
+          })
         })
-      })
+      }
     })
 
     return flatData
-  }
+  }, [])
+
+  useEffect(() => {
+    const flatData = convertToFlatData(structuredData, expandedCategories)
+    setRowData(flatData)
+  }, [structuredData, expandedCategories, convertToFlatData])
 
   const createCategoryRow = (category) => {
     return {
@@ -136,7 +172,6 @@ const FullDataPage = () => {
     const kpiPlan = offer.kpi_current_plan || {}
 
     return {
-      type: 'Оффер',
       offer_id: offer.key,
       offer_name: offer.description,
       description: offer.description,
@@ -182,7 +217,6 @@ const FullDataPage = () => {
 
   const createOperatorRow = (operator) => {
     return {
-      type: 'Оператор',
       operator_name: operator.description,
       description: operator.description,
       calls_effective: operator.kpi_stat?.calls_group_effective_count || 0,
@@ -211,7 +245,6 @@ const FullDataPage = () => {
 
   const createAffiliateRow = (affiliate) => {
     return {
-      type: 'Вебмастер',
       aff_id: affiliate.key,
       description: `Веб #${affiliate.key}`,
       calls_effective: affiliate.kpi_stat?.calls_group_effective_count || 0,
@@ -240,12 +273,44 @@ const FullDataPage = () => {
 
   const columnDefs = [
     {
+      headerName: "",
+      field: "isCategory",
+      width: 60,
+      pinned: 'left',
+      cellRenderer: params => {
+        if (!params.data.isCategory) {
+          return <span style={{ marginLeft: '20px' }}>↳</span>
+        }
+        return (
+          <button
+            onClick={() => toggleCategory(params.data.description)}
+            className="expand-btn"
+            style={{
+              background: 'none',
+              border: 'none',
+              fontSize: '16px',
+              cursor: 'pointer',
+              padding: '4px 8px'
+            }}
+          >
+            {params.data.isExpanded ? '−' : '+'}
+          </button>
+        )
+      }
+    },
+    {
       headerName: "Тип данных",
       field: "type",
       width: 120,
       pinned: 'left',
+      cellRenderer: params => {
+        if (params.data.type === 'Категория') {
+          return params.data.description
+        }
+        return params.data.type
+      },
       cellStyle: params => {
-        const type = params.value;
+        const type = params.data.type
         if (type === 'Категория') return { backgroundColor: '#e3f2fd', fontWeight: 'bold' }
         if (type === 'Оффер') return { backgroundColor: '#f3e5f5' }
         if (type === 'Оператор') return { backgroundColor: '#e8f5e8' }
@@ -253,8 +318,24 @@ const FullDataPage = () => {
         return null
       }
     },
-    { headerName: "ID Оффер", field: "offer_id", width: 100, pinned: 'left' },
-    { headerName: "Оффер", field: "offer_name", width: 200, pinned: 'left' },
+    {
+      headerName: "ID Оффер",
+      field: "offer_id",
+      width: 100,
+      cellStyle: params => {
+        if (!params.data.offer_id) return { paddingLeft: '20px' }
+        return null
+      }
+    },
+    {
+      headerName: "Оффер",
+      field: "offer_name",
+      width: 200,
+      cellStyle: params => {
+        if (!params.data.offer_id) return { paddingLeft: '20px' }
+        return null
+      }
+    },
     { headerName: "ID Вебмастер", field: "aff_id", width: 120 },
     { headerName: "Оператор", field: "operator_name", width: 150 },
     { headerName: "Категория", field: "category", width: 150 },
@@ -481,13 +562,19 @@ const FullDataPage = () => {
     autoHeight: true,
   }
 
+  // Загрузка фильтров при монтировании и при изменении пользователя
   useEffect(() => {
-    loadCategories()
-  }, [])
+    if (!authLoading && user) {
+      loadCategoriesAndAdvertisers();
+    }
+  }, [authLoading, user, loadCategoriesAndAdvertisers]);
 
+  // Загрузка данных при монтировании и при изменении пользователя
   useEffect(() => {
-    loadStructuredData()
-  }, [loadStructuredData])
+    if (!authLoading && user) {
+      loadStructuredData();
+    }
+  }, [authLoading, user, loadStructuredData]);
 
   const exportToCSV = () => {
     if (gridRef.current?.api) {
@@ -510,6 +597,20 @@ const FullDataPage = () => {
     })
   }
 
+  const expandAll = () => {
+    const allCategories = new Set(structuredData.map(cat => cat.description))
+    setExpandedCategories(allCategories)
+  }
+
+  const collapseAll = () => {
+    setExpandedCategories(new Set())
+  }
+
+  // Показываем загрузку если проверяется авторизация
+  if (authLoading) {
+    return <div className="loading">Проверка авторизации...</div>
+  }
+
   return (
     <div className="full-data-page">
       <header className="full-data-header">
@@ -518,9 +619,17 @@ const FullDataPage = () => {
             ← Назад к аналитике
           </button>
           <h1>Полные данные KPI</h1>
-          <button onClick={exportToCSV} className="btn primary">
-            Экспорт в CSV
-          </button>
+          <div>
+            <button onClick={expandAll} className="btn secondary" style={{ marginRight: '10px' }}>
+              Развернуть все
+            </button>
+            <button onClick={collapseAll} className="btn secondary" style={{ marginRight: '10px' }}>
+              Свернуть все
+            </button>
+            <button onClick={exportToCSV} className="btn primary">
+              Экспорт в CSV
+            </button>
+          </div>
         </div>
       </header>
 
@@ -552,6 +661,18 @@ const FullDataPage = () => {
               <option value="">Все категории</option>
               {categories.map(cat => (
                 <option key={cat} value={cat}>{cat}</option>
+              ))}
+            </select>
+          </div>
+          <div className="filter-group">
+            <label>Advertiser:</label>
+            <select
+              value={filters.advertiser}
+              onChange={e => setFilters({...filters, advertiser: e.target.value})}
+            >
+              <option value="">Все advertiser</option>
+              {advertisers.map(adv => (
+                <option key={adv} value={adv}>{adv}</option>
               ))}
             </select>
           </div>

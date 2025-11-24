@@ -469,3 +469,23 @@
     font-size: 1.2rem;
   }
 }
+.expand-btn {
+  transition: all 0.2s ease;
+  border-radius: 3px;
+}
+
+.expand-btn:hover {
+  background-color: #e9ecef !important;
+}
+
+.full-data-grid .ag-row {
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.full-data-grid .ag-row-level-0 {
+  font-weight: 600;
+}
+
+.full-data-grid .ag-row-level-1 {
+  font-weight: 400;
+}

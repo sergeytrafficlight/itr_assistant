@@ -188,45 +188,44 @@ class DBService:
 
         query = """
         SELECT
-            partners_atscallevent.id as call_eff_id,
-            crm_call_calldata.id as call_eff_crm_id,
+            pae.id as call_eff_id,
+            ccd.id as call_eff_crm_id,
             po.id as call_eff_offer_id,
             po.name as offer_name,
-            partners_atscallevent.uniqueid as call_eff_uniqueid,
-            LEFT(DATE_ADD(partners_atscallevent.calldate, INTERVAL 3 HOUR), 10) AS call_eff_calldate,
-            crm_call_calldata.crm_lead_id as call_eff_crm_lead_id,
+            pae.uniqueid as call_eff_uniqueid,
+            LEFT(DATE_ADD(pae.calldate, INTERVAL 3 HOUR), 10) AS call_eff_calldate,
+            ccd.crm_lead_id as call_eff_crm_lead_id,
             uu.id as call_eff_operator_id,
-            partners_atscallevent.billsec as call_eff_billsec,
-            crm_call_calldata.oktell_duration as call_eff_billsec_exact,
-            crm_call_calldata.oktell_anti_robot as call_eff_robo_detected,
+            pae.billsec as call_eff_billsec,
+            ccd.oktell_duration as call_eff_billsec_exact,
+            ccd.oktell_anti_robot as call_eff_robo_detected,
             lv_op.username as lv_username,
             group_offer.name as category_name,
             pt.webmaster_id as call_eff_affiliate_id
-        FROM partners_atscallevent
-        LEFT JOIN crm_call_calldata ON crm_call_calldata.id = partners_atscallevent.assigned_call_data_id
-        LEFT JOIN partners_lvlead ON partners_atscallevent.lvlead_id = partners_lvlead.id
-        LEFT JOIN crm_leads_crmlead ON crm_leads_crmlead.lvlead_id = partners_lvlead.id
-        LEFT JOIN partners_lvoperator lv_op ON lv_op.id = partners_atscallevent.lvoperator_id
-        LEFT JOIN partners_userbasedonlvoperator pu ON pu.operator_id = partners_atscallevent.lvoperator_id
+        FROM partners_atscallevent pae
+        INNER JOIN partners_lvlead lv ON pae.lvlead_id = lv.id
+        INNER JOIN partners_tllead pt ON lv.tl_id = pt.external_id
+        INNER JOIN partners_offer po ON pt.offer_id = po.id
+        INNER JOIN partners_assignedoffer assigned_offer ON assigned_offer.offer_id = po.id
+        INNER JOIN partners_groupoffer group_offer ON assigned_offer.group_id = group_offer.id
+        LEFT JOIN crm_call_calldata ccd ON ccd.id = pae.assigned_call_data_id
+        LEFT JOIN partners_lvoperator lv_op ON lv_op.id = pae.lvoperator_id
+        LEFT JOIN partners_userbasedonlvoperator pu ON pu.operator_id = pae.lvoperator_id
         LEFT JOIN users_user uu ON uu.id = pu.user_id
         LEFT JOIN users_department ud ON ud.id = uu.department_id
-        LEFT JOIN partners_tllead pt ON partners_lvlead.tl_id = pt.external_id
-        LEFT JOIN partners_subsystem AS subsystem ON subsystem.id = pt.subsystem_id
-        LEFT JOIN partners_offer po ON pt.offer_id = po.id
-        LEFT JOIN partners_assignedoffer assigned_offer ON assigned_offer.offer_id = po.id
-        LEFT JOIN partners_groupoffer group_offer ON assigned_offer.group_id = group_offer.id
-        LEFT JOIN crm_call_oktelltask ON partners_atscallevent.oktell_task_id = crm_call_oktelltask.id
+        LEFT JOIN partners_subsystem subsystem ON subsystem.id = pt.subsystem_id
+        LEFT JOIN crm_call_oktelltask ccot ON pae.oktell_task_id = ccot.id
         WHERE 1=1
-        AND partners_atscallevent.billsec >= 30
-        AND ((ud.name LIKE '%%_НП_%%' OR ud.name LIKE '%%_СП_%%') OR (crm_call_oktelltask.type = 'new_sales'))
+        AND pae.billsec >= 30
+        AND pae.calldate >= %s
+        AND pae.calldate < %s
+        AND group_offer.name NOT IN ({})
         AND po.id IS NOT NULL
         AND lv_op.username IS NOT NULL
-        AND group_offer.name NOT IN ({})
-        AND partners_atscallevent.calldate >= %s
-        AND partners_atscallevent.calldate < %s
+        AND ((ud.name LIKE '%%_НП_%%' OR ud.name LIKE '%%_СП_%%') OR ccot.type = 'new_sales')
         """.format(",".join(["%s"] * len(DBService.EXCLUDED_CATEGORIES)))
 
-        params = DBService.EXCLUDED_CATEGORIES + [date_from, date_to]
+        params = [date_from, date_to] + DBService.EXCLUDED_CATEGORIES
 
         if categories:
             placeholders, cat_params = DBService._prepare_in_values(categories)
@@ -252,6 +251,7 @@ class DBService:
             placeholders, aff_params = DBService._prepare_in_values(aff_ids)
             query += f" AND pt.webmaster_id IN {placeholders}"
             params.extend(aff_params)
+
         return DBService._execute_query(query, params)
 
     @staticmethod
@@ -331,6 +331,7 @@ class DBService:
         query += " ORDER BY lv.approved_at ASC"
 
         return DBService._execute_query(query, params)
+
     @staticmethod
     def get_leads_container(filters: Dict) -> List[Dict]:
         date_from = DBService._to_utc(filters.get('date_from'), "00:00:00")
@@ -345,11 +346,10 @@ class DBService:
         categories = filters.get('category', [])
         aff_ids = filters.get('aff_id', [])
 
-        # ИСПРАВЛЕНО: полное соответствие эталону
         query = """
         SELECT
-            crm_leads_crmlead.id as lead_container_crm_lead_id,
-            crm_leads_crmlead.id as call_eff_crm_lead_id,
+            clc.id as lead_container_crm_lead_id,
+            clc.id as call_eff_crm_lead_id,
             LEFT(DATE_ADD(lv.created_at, INTERVAL 3 HOUR), 19) as lead_container_created_at,
             LEFT(DATE_ADD(lv.approved_at, INTERVAL 3 HOUR), 19) as lead_container_approved_at,
             LEFT(DATE_ADD(lv.canceled_at, INTERVAL 3 HOUR), 19) as lead_container_canceled_at,
@@ -357,7 +357,7 @@ class DBService:
             lv_status.status_verbose as lead_container_status_verbose,
             lv_status.status_group as lead_container_status_group,
             pt.is_trash as lead_container_is_trash,
-            LEFT(DATE_ADD(lv.created_at, INTERVAL 3+24 HOUR), 19) as lead_container_lead_ttl_till,
+            LEFT(DATE_ADD(lv.created_at, INTERVAL 27 HOUR), 19) as lead_container_lead_ttl_till,
             LEFT(DATE_ADD(NOW(), INTERVAL 3 HOUR), 19) as lead_container_now,
             offer.id as offer_id,
             offer.name as offer_name,
@@ -365,18 +365,18 @@ class DBService:
             NULL as lv_username,
             group_offer.name as category_name
         FROM partners_lvlead lv
-        LEFT JOIN crm_leads_crmlead ON crm_leads_crmlead.lvlead_id = lv.id
-        LEFT JOIN partners_tllead pt ON lv.tl_id = pt.external_id
-        LEFT JOIN partners_lvleadstatuses AS lv_status ON lv.leadvertex_status_id = lv_status.id
-        LEFT JOIN partners_offer as offer ON pt.offer_id = offer.id
-        LEFT JOIN partners_assignedoffer assigned_offer ON assigned_offer.offer_id = offer.id
-        LEFT JOIN partners_groupoffer group_offer ON assigned_offer.group_id = group_offer.id
-        LEFT JOIN partners_subsystem AS subsystem ON subsystem.id = pt.subsystem_id
+        INNER JOIN partners_tllead pt ON lv.tl_id = pt.external_id
+        INNER JOIN partners_offer offer ON pt.offer_id = offer.id
+        INNER JOIN partners_assignedoffer assigned_offer ON assigned_offer.offer_id = offer.id
+        INNER JOIN partners_groupoffer group_offer ON assigned_offer.group_id = group_offer.id
+        LEFT JOIN crm_leads_crmlead clc ON clc.lvlead_id = lv.id
+        LEFT JOIN partners_lvleadstatuses lv_status ON lv.leadvertex_status_id = lv_status.id
+        LEFT JOIN partners_subsystem subsystem ON subsystem.id = pt.subsystem_id
         WHERE 1=1
         AND offer.id IS NOT NULL
         AND group_offer.name NOT IN ({})
-        AND DATE_ADD(lv.created_at, INTERVAL 3 HOUR) >= %s
-        AND DATE_ADD(lv.created_at, INTERVAL 3 HOUR) < %s
+        AND lv.created_at >= DATE_SUB(%s, INTERVAL 3 HOUR)
+        AND lv.created_at < DATE_SUB(%s, INTERVAL 3 HOUR)
         """.format(",".join(["%s"] * len(DBService.EXCLUDED_CATEGORIES)))
 
         params = DBService.EXCLUDED_CATEGORIES + [date_from, date_to]

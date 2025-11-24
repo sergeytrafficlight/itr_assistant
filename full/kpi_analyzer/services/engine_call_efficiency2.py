@@ -3,10 +3,10 @@ from datetime import datetime, date
 from typing import Optional, Dict, List, Any
 from decimal import Decimal
 from .statistics import safe_div
-
+from .db_service import DBService
 logger = logging.getLogger(__name__)
 
-# Счетчик для ограничения логов
+
 _log_counter = 0
 _MAX_LOGS = 40
 
@@ -357,7 +357,6 @@ def push_lead_to_engine(sql_data: Dict, offer_id: int, stat: Stat):
 
 def finalize_engine_stat(stat: Stat, kpi_list: KpiList):
     global _log_counter
-    from .db_service import DBService
 
     def is_fake_approve_func(lead_dict: Dict) -> str:
         return DBService.is_fake_approve(lead_dict)

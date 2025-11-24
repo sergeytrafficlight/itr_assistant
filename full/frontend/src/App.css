@@ -118,3 +118,15 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #5a5e62;
 }
+.app-loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  background: var(--bg-color);
+}
+
+.loading {
+  font-size: 18px;
+  color: var(--text-color);
+}

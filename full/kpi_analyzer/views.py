@@ -3,9 +3,15 @@ import logging
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import IsAuthenticated, IsAdminUser, AllowAny
+from rest_framework.decorators import permission_classes
 from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend
+from django.contrib.auth.models import User
+from django.contrib.auth.hashers import make_password
+from datetime import datetime
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from .services.output_formatter import KPIOutputFormatter
 from .services.db_service import DBService
@@ -21,23 +27,198 @@ from .pivot_engine import PivotEngine
 logger = logging.getLogger(__name__)
 
 
+class PublicTokenObtainPairView(TokenObtainPairView):
+    permission_classes = [AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        response = super().post(request, *args, **kwargs)
+        if response.status_code == 200:
+            pass
+        return response
+
+
+class UserRegistrationView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminUser]
+    authentication_classes = [JWTAuthentication]
+
+    def post(self, request):
+        username = request.data.get('username')
+        email = request.data.get('email')
+        password = request.data.get('password')
+
+        if User.objects.filter(username=username).exists():
+            return Response(
+                {'error': 'Пользователь с таким логином уже существует'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        user = User.objects.create_user(
+            username=username,
+            email=email,
+            password=password,
+            is_active=True
+        )
+
+        return Response({
+            'id': user.id,
+            'username': user.username,
+            'email': user.email,
+            'message': 'Пользователь успешно создан'
+        }, status=status.HTTP_201_CREATED)
+
 class SpreadsheetViewSet(viewsets.ModelViewSet):
     queryset = Spreadsheet.objects.all().order_by('-id')
     serializer_class = SpreadsheetSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
     pagination_class = None
 
 
 class SheetViewSet(viewsets.ModelViewSet):
     queryset = Sheet.objects.all()
     serializer_class = SheetSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+
+@permission_classes([IsAuthenticated, IsAdminUser])
+class AdminStatsView(APIView):
+    authentication_classes = [JWTAuthentication]
+
+    def get(self, request):
+        today = datetime.now().date()
+
+        stats = {
+            'total_users': User.objects.count(),
+            'active_users': User.objects.filter(is_active=True).count(),
+            'inactive_users': User.objects.filter(is_active=False).count(),
+            'new_users_today': User.objects.filter(date_joined__date=today).count(),
+        }
+
+        return Response(stats)
+
+
+@permission_classes([IsAuthenticated, IsAdminUser])
+class UserListView(APIView):
+    authentication_classes = [JWTAuthentication]
+
+    def get(self, request):
+        users = User.objects.all().order_by('-date_joined')
+        user_data = []
+
+        for user in users:
+            user_data.append({
+                'id': user.id,
+                'username': user.username,
+                'email': user.email,
+                'is_active': user.is_active,
+                'date_joined': user.date_joined,
+                'last_login': user.last_login,
+            })
+
+        return Response(user_data)
+
+    def post(self, request):
+        username = request.data.get('username')
+        email = request.data.get('email')
+        password = request.data.get('password')
+        is_active = request.data.get('is_active', True)
+
+        if User.objects.filter(username=username).exists():
+            return Response(
+                {'error': 'Пользователь с таким логином уже существует'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if User.objects.filter(email=email).exists():
+            return Response(
+                {'error': 'Пользователь с таким email уже существует'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        user = User.objects.create(
+            username=username,
+            email=email,
+            password=make_password(password),
+            is_active=is_active
+        )
+
+        return Response({
+            'id': user.id,
+            'username': user.username,
+            'email': user.email,
+            'is_active': user.is_active,
+            'date_joined': user.date_joined
+        }, status=status.HTTP_201_CREATED)
+
+
+@permission_classes([IsAuthenticated, IsAdminUser])
+class UserDetailView(APIView):
+    authentication_classes = [JWTAuthentication]
+
+    def patch(self, request, pk):
+        try:
+            user = User.objects.get(pk=pk)
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'Пользователь не найден'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        if 'is_active' in request.data:
+            user.is_active = request.data['is_active']
+
+        if 'password' in request.data:
+            user.password = make_password(request.data['password'])
+
+        user.save()
+
+        return Response({
+            'id': user.id,
+            'username': user.username,
+            'email': user.email,
+            'is_active': user.is_active
+        })
+
+    def delete(self, request, pk):
+        try:
+            user = User.objects.get(pk=pk)
+
+            if user == request.user:
+                return Response(
+                    {'error': 'Нельзя удалить собственный аккаунт'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            user.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'Пользователь не найден'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+
+@permission_classes([IsAuthenticated, IsAdminUser])
+class AdminAuthView(APIView):
+    authentication_classes = [JWTAuthentication]
+
+    def get(self, request):
+        return Response({
+            'id': request.user.id,
+            'username': request.user.username,
+            'email': request.user.email,
+            'is_staff': request.user.is_staff,
+            'is_superuser': request.user.is_superuser
+        })
 
 
 class CellViewSet(viewsets.ModelViewSet):
     queryset = Cell.objects.all()
     serializer_class = CellSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
 
     @action(detail=False, methods=['post'])
     def bulk_update(self, request):
@@ -63,7 +244,8 @@ class CellViewSet(viewsets.ModelViewSet):
 class FormulaViewSet(viewsets.ModelViewSet):
     queryset = Formula.objects.all()
     serializer_class = FormulaSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
 
     @action(detail=False, methods=['post'])
     def evaluate(self, request):
@@ -82,7 +264,8 @@ class FormulaViewSet(viewsets.ModelViewSet):
 class PivotTableViewSet(viewsets.ModelViewSet):
     queryset = PivotTable.objects.all()
     serializer_class = PivotTableSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
 
     @action(detail=True, methods=['post'])
     def generate(self, request, pk=None):
@@ -105,23 +288,26 @@ class PivotTableViewSet(viewsets.ModelViewSet):
 class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
-    permission_classes = [AllowAny]
-    filter_backends = [DjangoFilterBackend]
+    permission_classes = [IsAuthenticated]
+    authentication_classes = []
+    filter_backends = []
     filterset_fields = ['name']
 
 
 class OfferViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Offer.objects.all()
     serializer_class = OfferSerializer
-    permission_classes = [AllowAny]
-    filter_backends = [DjangoFilterBackend]
+    permission_classes = [IsAuthenticated]
+    authentication_classes = []
+    filter_backends = []
     filterset_fields = ['category', 'external_id']
 
 
 class OperatorViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Operator.objects.all()
     serializer_class = OperatorSerializer
-    permission_classes = [AllowAny]
+    permission_classes = []
+    authentication_classes = []
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['username']
 
@@ -129,13 +315,15 @@ class OperatorViewSet(viewsets.ReadOnlyModelViewSet):
 class AffiliateViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Affiliate.objects.all()
     serializer_class = AffiliateSerializer
-    permission_classes = [AllowAny]
+    permission_classes = []
+    authentication_classes = []
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['external_id']
 
 
 class KPIAdvancedAnalysisViewSet(viewsets.ViewSet):
-    permission_classes = [AllowAny]
+    permission_classes = []
+    authentication_classes = []
 
     @action(detail=False, methods=['post'])
     def advanced_analysis(self, request):
@@ -149,12 +337,6 @@ class KPIAdvancedAnalysisViewSet(viewsets.ViewSet):
             analyzer = OpAnalyzeKPI()
             stat = analyzer.run_analysis(filter_params)
 
-            # ОТЛАДОЧНАЯ ИНФОРМАЦИЯ
-            logger.info(f"=== ОТЛАДОЧНАЯ ИНФОРМАЦИЯ ===")
-            logger.info(f"Тип stat объекта: {type(stat)}")
-            logger.info(f"Атрибуты stat: {dir(stat)}")
-            logger.info(f"Количество категорий: {len(stat.category)}")
-
             if hasattr(stat, 'category'):
                 logger.info(f"stat.category существует, количество: {len(stat.category)}")
             else:
@@ -167,37 +349,13 @@ class KPIAdvancedAnalysisViewSet(viewsets.ViewSet):
 
             for cat_name, category in stat.category.items():
                 category_count += 1
-                logger.info(f"--- Категория #{category_count}: '{cat_name}' ---")
-                logger.info(f"Тип категории: {type(category)}")
-                logger.info(f"Атрибуты категории: {dir(category)}")
-
                 if hasattr(category, 'kpi_stat'):
-                    logger.info(f"category.kpi_stat существует")
                     if hasattr(category.kpi_stat, 'leads_effective_count'):
                         cat_leads = category.kpi_stat.leads_effective_count
                         total_leads += cat_leads
-                        logger.info(f"  leads_effective_count: {cat_leads}")
-                    else:
-                        logger.info("  leads_effective_count отсутствует")
-
                     if hasattr(category.kpi_stat, 'calls_group_effective_count'):
                         cat_calls = category.kpi_stat.calls_group_effective_count
                         total_calls += cat_calls
-                        logger.info(f"  calls_group_effective_count: {cat_calls}")
-                    else:
-                        logger.info("  calls_group_effective_count отсутствует")
-                else:
-                    logger.info("  category.kpi_stat отсутствует")
-
-                # Проверяем наличие других возможных источников данных
-                if hasattr(category, 'lead_container'):
-                    logger.info(f"  lead_container: {category.lead_container}")
-
-            logger.info(f"=== ИТОГО ===")
-            logger.info(f"Всего категорий обработано: {category_count}")
-            logger.info(f"Общее количество leads: {total_leads}")
-            logger.info(f"Общее количество calls: {total_calls}")
-            logger.info(f"=== КОНЕЦ ОТЛАДОЧНОЙ ИНФОРМАЦИИ ===")
 
             formatter = KPIOutputFormatter()
             result_data = formatter.format_for_frontend(
@@ -231,10 +389,6 @@ class KPIAdvancedAnalysisViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=['post'])
     def full_structured_data(self, request):
-        """
-        Получение полных структурированных данных для FullDataPage
-        Возвращает все данные в структурированном формате с полной информацией
-        """
         start_time = time.time()
         filter_params = request.data or {}
         response = {'success': False, 'data': []}
@@ -246,7 +400,6 @@ class KPIAdvancedAnalysisViewSet(viewsets.ViewSet):
             analyzer = OpAnalyzeKPI()
             stat = analyzer.run_analysis(filter_params)
 
-            # Отладочная информация
             if hasattr(stat, 'category'):
                 logger.info(f"Обработано категорий: {len(stat.category)}")
             else:
@@ -256,7 +409,6 @@ class KPIAdvancedAnalysisViewSet(viewsets.ViewSet):
             total_leads = 0
             total_calls = 0
 
-            # Собираем статистику
             for cat_name, category in stat.category.items():
                 if hasattr(category, 'kpi_stat'):
                     if hasattr(category.kpi_stat, 'leads_effective_count'):
@@ -265,8 +417,6 @@ class KPIAdvancedAnalysisViewSet(viewsets.ViewSet):
                         total_calls += category.kpi_stat.calls_group_effective_count
 
             formatter = KPIOutputFormatter()
-
-            # Получаем структурированные данные
             result_data = formatter.format_for_frontend(
                 stat,
                 group_rows=filter_params.get('group_rows', 'Нет')
@@ -297,10 +447,6 @@ class KPIAdvancedAnalysisViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=['post'])
     def full_data_table(self, request):
-        """
-        Получение данных в виде плоской таблицы для AG-Grid
-        Возвращает все строки с полным набором колонок
-        """
         start_time = time.time()
         filter_params = request.data or {}
         response = {'success': False, 'rows': []}
@@ -313,8 +459,6 @@ class KPIAdvancedAnalysisViewSet(viewsets.ViewSet):
             stat = analyzer.run_analysis(filter_params)
 
             formatter = KPIOutputFormatter()
-
-            # Используем метод create_output_structure для получения всех данных в табличном формате
             table_data = formatter.create_output_structure(stat)
 
             if not table_data or len(table_data) < 2:
@@ -328,24 +472,19 @@ class KPIAdvancedAnalysisViewSet(viewsets.ViewSet):
                 }
                 return Response(response)
 
-            # Первая строка - заголовки
             headers = table_data[0]
-            # Остальные строки - данные
             rows_data = table_data[1:]
 
-            # Преобразуем в формат для фронтенда
             formatted_rows = []
             for row_index, row in enumerate(rows_data):
                 row_dict = {
                     'id': row_index,
-                    'type': row[0] if len(row) > 0 else '',  # Тип данных из первой колонки
+                    'type': row[0] if len(row) > 0 else '',
                 }
 
-                # Добавляем все колонки
                 for col_index, value in enumerate(row):
                     if col_index < len(headers):
                         header = headers[col_index]
-                        # Создаем понятные имена полей для AG-Grid
                         field_name = self._get_field_name(header, col_index)
                         row_dict[field_name] = value
 
@@ -369,10 +508,6 @@ class KPIAdvancedAnalysisViewSet(viewsets.ViewSet):
         return Response(response)
 
     def _get_field_name(self, header, col_index):
-        """
-        Преобразует заголовок в имя поля для AG-Grid
-        """
-        # Базовое преобразование русских заголовков в английские имена полей
         field_mapping = {
             "Тип данных": "type",
             "ID Оффер": "offer_id",
@@ -417,11 +552,13 @@ class KPIAdvancedAnalysisViewSet(viewsets.ViewSet):
         if header in field_mapping:
             return field_mapping[header]
         else:
-            # Генерируем имя на основе индекса, если заголовок не распознан
             return f"col_{col_index}"
 
 
 class LegacyKPIAnalysisView(APIView):
+    permission_classes = []
+    authentication_classes = []
+
     def post(self, request):
         viewset = KPIAdvancedAnalysisViewSet()
         result = viewset.advanced_analysis(request)
@@ -433,6 +570,9 @@ class LegacyKPIAnalysisView(APIView):
 
 
 class LegacyFilterParamsView(APIView):
+    permission_classes = []
+    authentication_classes = []
+
     def get(self, request):
         return Response({
             'available_filters': {
@@ -444,8 +584,21 @@ class LegacyFilterParamsView(APIView):
         })
 
     def get_advertisers_list(self):
-        query = "SELECT DISTINCT name FROM partners_subsystem WHERE name IS NOT NULL"
-        return [row['name'] for row in DBService._execute_query(query, [])]
+        query = """
+        SELECT DISTINCT name 
+        FROM partners_subsystem 
+        WHERE 1=1
+        AND system = 'traffic_light' 
+        AND name IS NOT NULL 
+        AND name != ''
+        ORDER BY name
+        """
+        try:
+            results = DBService._execute_query(query, [])
+            return [row['name'] for row in results if row['name']]
+        except Exception as e:
+            logger.error(f"Ошибка получения advertisers: {e}")
+            return []
 
     def get_categories_list(self):
         query = """SELECT DISTINCT name FROM partners_groupoffer 
@@ -456,7 +609,8 @@ class LegacyFilterParamsView(APIView):
 class KpiDataViewSet(viewsets.ModelViewSet):
     queryset = KpiData.objects.all()
     serializer_class = KpiDataSerializer
-    permission_classes = [AllowAny]
+    permission_classes = []
+    authentication_classes = []
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['category', 'offer_name', 'operator_name', 'date_from']
 

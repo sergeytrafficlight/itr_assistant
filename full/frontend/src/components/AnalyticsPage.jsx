@@ -1,17 +1,17 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react'
-import axios from 'axios'
-import { AgGridReact } from 'ag-grid-react'
-import 'ag-grid-community/styles/ag-grid.css'
-import 'ag-grid-community/styles/ag-theme-quartz.css'
-import { useNavigate } from 'react-router-dom'
-import './AnalyticsPage.css'
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { AgGridReact } from 'ag-grid-react';
+import 'ag-grid-community/styles/ag-grid.css';
+import 'ag-grid-community/styles/ag-theme-quartz.css';
+import { useNavigate } from 'react-router-dom';
+import api, { legacyAPI, kpiAPI } from '../api/admin';
+import './AnalyticsPage.css';
 
 const AnalyticsPage = () => {
-  const [advancedData, setAdvancedData] = useState([])
-  const [recommendations, setRecommendations] = useState([])
-  const [performance, setPerformance] = useState({})
-  const [categories, setCategories] = useState([])
-  const [advertisers, setAdvertisers] = useState([])
+  const [advancedData, setAdvancedData] = useState([]);
+  const [recommendations, setRecommendations] = useState([]);
+  const [performance, setPerformance] = useState({});
+  const [categories, setCategories] = useState([]);
+  const [advertisers, setAdvertisers] = useState([]);
   const [filters, setFilters] = useState({
     date_from: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     date_to: new Date().toISOString().split('T')[0],
@@ -22,36 +22,38 @@ const AnalyticsPage = () => {
     advertiser: '',
     output: 'Все',
     group_rows: 'Нет'
-  })
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  const gridRef = useRef()
-  const cancelToken = useRef(null)
-  const firstRender = useRef(true)
-  const filterDebounce = useRef(null)
-  const navigate = useNavigate()
+  });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const gridRef = useRef();
+  const abortControllerRef = useRef(null); // Изменил на abortControllerRef
+  const firstRender = useRef(true);
+  const filterDebounce = useRef(null);
+  const navigate = useNavigate();
 
   const loadCategoriesAndAdvertisers = async () => {
     try {
-      const res = await axios.get('/api/legacy/filter-params/')
-      const cats = res.data.available_filters?.categories || []
-      const advs = res.data.available_filters?.advertisers || []
-      setCategories(cats)
-      setAdvertisers(advs)
+      const res = await legacyAPI.getFilterParams();
+      setCategories(res.data.available_filters?.categories || []);
+      setAdvertisers(res.data.available_filters?.advertisers || []);
     } catch (err) {
-      console.error('Ошибка загрузки категорий и advertisers:', err)
+      console.error('Ошибка загрузки фильтров:', err);
     }
-  }
+  };
 
   const loadAdvancedAnalysis = useCallback(async () => {
-    if (cancelToken.current) cancelToken.current.cancel('Отмена предыдущего запроса')
-    cancelToken.current = axios.CancelToken.source()
+    // Отменяем предыдущий запрос если он существует
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort('Отмена предыдущего запроса');
+    }
 
-    setLoading(true)
-    setError('')
+    // Создаем новый AbortController
+    abortControllerRef.current = new AbortController();
+
+    setLoading(true);
+    setError('');
 
     try {
-      // Преобразуем фильтры для сервера
       const requestFilters = {
         date_from: filters.date_from,
         date_to: filters.date_to,
@@ -61,61 +63,64 @@ const AnalyticsPage = () => {
         advertiser: filters.advertiser ? [filters.advertiser] : [],
         output: filters.output,
         group_rows: filters.group_rows
-      }
-      
-      // Добавляем lv_op если есть operator_name
+      };
+
       if (filters.operator_name) {
-        requestFilters.lv_op = [filters.operator_name.toLowerCase()]
+        requestFilters.lv_op = [filters.operator_name.toLowerCase()];
       }
 
-      const res = await axios.post('/api/kpi/advanced_analysis/', requestFilters, { cancelToken: cancelToken.current.token })
+      const res = await kpiAPI.advancedAnalysis(requestFilters, {
+        signal: abortControllerRef.current.signal
+      });
+
       if (res.data.success) {
-        setAdvancedData(res.data.data || [])
-        setRecommendations(res.data.recommendations || [])
-        setPerformance(res.data.performance || {})
+        setAdvancedData(res.data.data || []);
+        setRecommendations(res.data.recommendations || []);
+        setPerformance(res.data.performance || {});
 
         if (res.data.groups && gridRef.current?.api) {
           setTimeout(() => {
             res.data.groups.forEach(g => {
               for (let i = g.start; i <= g.end; i++) {
-                const node = gridRef.current.api.getRowNode(i.toString())
-                if (node) node.setExpanded(true)
+                const node = gridRef.current.api.getRowNode(i.toString());
+                if (node) node.setExpanded(true);
               }
-            })
-          }, 100)
+            });
+          }, 100);
         }
       } else {
-        setError(res.data.error || 'Ошибка анализа')
+        setError(res.data.error || 'Ошибка анализа');
       }
     } catch (err) {
-      if (!axios.isCancel(err)) {
-        setError(err.response?.data?.error || 'Сервер недоступен')
-        console.error('Ошибка запроса:', err)
+      if (err.name !== 'AbortError') {
+        setError(err.response?.data?.error || 'Сервер недоступен');
+        console.error('Ошибка запроса:', err);
       }
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }, [filters])
+  }, [filters]);
+
+  // Очистка при размонтировании компонента
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort('Компонент размонтирован');
+      }
+    };
+  }, []);
 
   const getRowData = useCallback(() => {
-    if (!advancedData.length) return []
-    const rows = []
-    let rowId = 0
-
+    if (!advancedData.length) return [];
+    const rows = [];
+    let rowId = 0;
     advancedData.forEach(cat => {
-      // Фильтрация по output
       if (filters.output === 'Есть активность') {
-        const hasCalls = cat.kpi_stat?.calls_group_effective_count > 0
-        const hasLeads = cat.lead_container?.leads_non_trash_count > 0
-        if (!hasCalls && !hasLeads) {
-          return
-        }
+        const hasCalls = cat.kpi_stat?.calls_group_effective_count > 0;
+        const hasLeads = cat.lead_container?.leads_non_trash_count > 0;
+        if (!hasCalls && !hasLeads) return;
       }
-
-      // Фильтрация по категории
-      if (filters.category && cat.description !== filters.category) {
-        return
-      }
+      if (filters.category && cat.description !== filters.category) return;
 
       rows.push({
         id: rowId++,
@@ -137,18 +142,14 @@ const AnalyticsPage = () => {
         raw_to_approve_percent: cat.raw_to_approve_percent || 0,
         raw_to_buyout_percent: cat.raw_to_buyout_percent || 0,
         non_trash_to_buyout_percent: cat.non_trash_to_buyout_percent || 0,
-      })
+      });
 
       cat.offers?.forEach(offer => {
-        // Фильтрация по output для офферов
         if (filters.output === 'Есть активность') {
-          const hasCalls = offer.kpi_stat?.calls_group_effective_count > 0
-          const hasLeads = offer.lead_container?.leads_non_trash_count > 0
-          if (!hasCalls && !hasLeads) {
-            return
-          }
+          const hasCalls = offer.kpi_stat?.calls_group_effective_count > 0;
+          const hasLeads = offer.lead_container?.leads_non_trash_count > 0;
+          if (!hasCalls && !hasLeads) return;
         }
-
         rows.push({
           id: rowId++,
           type: 'offer',
@@ -169,19 +170,15 @@ const AnalyticsPage = () => {
           raw_to_approve_percent: offer.raw_to_approve_percent || 0,
           raw_to_buyout_percent: offer.raw_to_buyout_percent || 0,
           non_trash_to_buyout_percent: offer.non_trash_to_buyout_percent || 0,
-        })
-      })
+        });
+      });
 
       cat.operators?.forEach(op => {
-        // Фильтрация по output для операторов
         if (filters.output === 'Есть активность') {
-          const hasCalls = op.kpi_stat?.calls_group_effective_count > 0
-          const hasLeads = op.lead_container?.leads_non_trash_count > 0
-          if (!hasCalls && !hasLeads) {
-            return
-          }
+          const hasCalls = op.kpi_stat?.calls_group_effective_count > 0;
+          const hasLeads = op.lead_container?.leads_non_trash_count > 0;
+          if (!hasCalls && !hasLeads) return;
         }
-
         rows.push({
           id: rowId++,
           type: 'operator',
@@ -201,19 +198,15 @@ const AnalyticsPage = () => {
           raw_to_approve_percent: op.raw_to_approve_percent || 0,
           raw_to_buyout_percent: op.raw_to_buyout_percent || 0,
           non_trash_to_buyout_percent: op.non_trash_to_buyout_percent || 0,
-        })
-      })
+        });
+      });
 
       cat.affiliates?.forEach(aff => {
-        // Фильтрация по output для вебмастеров
         if (filters.output === 'Есть активность') {
-          const hasCalls = aff.kpi_stat?.calls_group_effective_count > 0
-          const hasLeads = aff.lead_container?.leads_non_trash_count > 0
-          if (!hasCalls && !hasLeads) {
-            return
-          }
+          const hasCalls = aff.kpi_stat?.calls_group_effective_count > 0;
+          const hasLeads = aff.lead_container?.leads_non_trash_count > 0;
+          if (!hasCalls && !hasLeads) return;
         }
-
         rows.push({
           id: rowId++,
           type: 'affiliate',
@@ -233,12 +226,11 @@ const AnalyticsPage = () => {
           raw_to_approve_percent: aff.raw_to_approve_percent || 0,
           raw_to_buyout_percent: aff.raw_to_buyout_percent || 0,
           non_trash_to_buyout_percent: aff.non_trash_to_buyout_percent || 0,
-        })
-      })
-    })
-
-    return rows
-  }, [advancedData, filters.output, filters.category])
+        });
+      });
+    });
+    return rows;
+  }, [advancedData, filters.output, filters.category]);
 
   const columnDefs = [
     { headerName: "Тип", field: "type", rowGroup: filters.group_rows === 'Да', hide: true },
@@ -246,17 +238,7 @@ const AnalyticsPage = () => {
     { headerName: "Звонки", field: "calls_effective", type: 'numericColumn', width: 110 },
     { headerName: "Лиды", field: "leads_raw", type: 'numericColumn', width: 110 },
     { headerName: "Продажи", field: "leads_effective", type: 'numericColumn', width: 110 },
-    {
-      headerName: "% Эфф.",
-      field: "effective_percent",
-      type: 'numericColumn',
-      width: 100,
-      valueFormatter: p => p.value ? p.value.toFixed(1) + '%' : '0%',
-      cellStyle: p => ({
-        color: p.value > 20 ? '#10b981' : p.value > 10 ? '#f59e0b' : '#ef4444',
-        fontWeight: 'bold'
-      })
-    },
+    { headerName: "% Эфф.", field: "effective_percent", type: 'numericColumn', width: 100, valueFormatter: p => p.value ? p.value.toFixed(1) + '%' : '0%', cellStyle: p => ({ color: p.value > 20 ? '#10b981' : p.value > 10 ? '#f59e0b' : '#ef4444', fontWeight: 'bold' }) },
     { headerName: "Эфф. факт", field: "effective_rate", type: 'numericColumn', width: 100, valueFormatter: p => p.value?.toFixed(2) || '0.00' },
     { headerName: "Эфф. план", field: "expecting_rate", type: 'numericColumn', width: 100, valueFormatter: p => p.value?.toFixed(2) || '-' },
     { headerName: "Без треша", field: "leads_non_trash", type: 'numericColumn', width: 120 },
@@ -269,15 +251,13 @@ const AnalyticsPage = () => {
     { headerName: "% Аппрув от сырых", field: "raw_to_approve_percent", type: 'numericColumn', width: 140, valueFormatter: p => p.value ? p.value.toFixed(1) + '%' : '0%' },
     { headerName: "% Выкуп от сырых", field: "raw_to_buyout_percent", type: 'numericColumn', width: 140, valueFormatter: p => p.value ? p.value.toFixed(1) + '%' : '0%' },
     { headerName: "% Выкуп от нетреша", field: "non_trash_to_buyout_percent", type: 'numericColumn', width: 150, valueFormatter: p => p.value ? p.value.toFixed(1) + '%' : '0%' },
-  ]
+  ];
 
   const exportToCSV = () => {
     if (gridRef.current?.api) {
-      gridRef.current.api.exportDataAsCsv({
-        fileName: `kpi_${filters.date_from}_to_${filters.date_to}`
-      })
+      gridRef.current.api.exportDataAsCsv({ fileName: `kpi_${filters.date_from}_to_${filters.date_to}` });
     }
-  }
+  };
 
   const resetFilters = () => {
     setFilters({
@@ -290,29 +270,28 @@ const AnalyticsPage = () => {
       advertiser: '',
       output: 'Все',
       group_rows: 'Нет'
-    })
-  }
+    });
+  };
 
   useEffect(() => {
     const init = async () => {
-      await loadCategoriesAndAdvertisers()
-      await loadAdvancedAnalysis()
-    }
-    init()
-  }, [loadAdvancedAnalysis])
+      await loadCategoriesAndAdvertisers();
+      await loadAdvancedAnalysis();
+    };
+    init();
+  }, [loadAdvancedAnalysis]);
 
   useEffect(() => {
     if (firstRender.current) {
-      firstRender.current = false
-      return
+      firstRender.current = false;
+      return;
     }
-    if (filterDebounce.current) clearTimeout(filterDebounce.current)
+    if (filterDebounce.current) clearTimeout(filterDebounce.current);
     filterDebounce.current = setTimeout(() => {
-      loadAdvancedAnalysis()
-    }, 500)
-
-    return () => clearTimeout(filterDebounce.current)
-  }, [filters, loadAdvancedAnalysis])
+      loadAdvancedAnalysis();
+    }, 500);
+    return () => clearTimeout(filterDebounce.current);
+  }, [filters, loadAdvancedAnalysis]);
 
   return (
     <div className="analytics-page">
@@ -320,9 +299,7 @@ const AnalyticsPage = () => {
         <h1>Расширенная аналитика KPI</h1>
         {performance && (
           <div className="performance-info">
-            <strong>Производительность:</strong> {performance.total_seconds}с |
-            Лидов: {performance.leads_count} |
-            Звонков: {performance.calls_count}
+            <strong>Производительность:</strong> {performance.total_seconds}с | Лидов: {performance.leads_count} | Звонков: {performance.calls_count}
           </div>
         )}
       </header>
@@ -382,9 +359,7 @@ const AnalyticsPage = () => {
             {loading ? '🔄 Загрузка...' : '📊 Анализ'}
           </button>
           <button onClick={exportToCSV} className="btn secondary">📥 CSV</button>
-          <button onClick={() => navigate('/full-data')} className="btn secondary">
-            📋 Полные данные
-          </button>
+          <button onClick={() => navigate('/full-data')} className="btn secondary"> 📋 Полные данные </button>
           <button onClick={resetFilters} className="btn secondary">🔄 Сброс</button>
         </div>
       </div>
@@ -434,16 +409,16 @@ const AnalyticsPage = () => {
               paginationPageSize={50}
               paginationPageSizeSelector={[20, 50, 100]}
               getRowStyle={params => {
-                if (params.data.type === 'category') return { backgroundColor: '#f0f8ff', fontWeight: 'bold' }
-                if (params.data.type === 'offer') return { backgroundColor: '#f8fff8' }
-                return null
+                if (params.data.type === 'category') return { backgroundColor: '#f0f8ff', fontWeight: 'bold' };
+                if (params.data.type === 'offer') return { backgroundColor: '#f8fff8' };
+                return null;
               }}
             />
           </div>
         )}
       </div>
     </div>
-  )
-}
+  );
+};
 
-export default AnalyticsPage
+export default AnalyticsPage;
