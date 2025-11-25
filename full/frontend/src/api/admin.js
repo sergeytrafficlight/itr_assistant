@@ -123,6 +123,8 @@ export const kpiAPI = {
 
 export const legacyAPI = {
   getFilterParams: () => api.get('/api/legacy/filter-params/'),
+  getCategories: () => api.get('/api/categories/'),
+  getAdvertisers: () => api.get('/api/advertisers/'),
   kpiAnalysis: (filters) => api.post('/api/legacy/kpi-analysis/', filters),
 };
 

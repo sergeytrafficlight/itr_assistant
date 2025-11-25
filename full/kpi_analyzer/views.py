@@ -16,10 +16,10 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from .services.output_formatter import KPIOutputFormatter
 from .services.db_service import DBService
 from .services.kpi_analyzer import OpAnalyzeKPI
-from .models import Spreadsheet, Sheet, Cell, Formula, PivotTable, Category, Offer, Operator, Affiliate, KpiData
+from .models import Spreadsheet, Sheet, Cell, Formula, PivotTable, KpiData
 from .serializers import (
-    SpreadsheetSerializer, SheetSerializer, CellSerializer, FormulaSerializer, PivotTableSerializer,
-    CategorySerializer, OfferSerializer, OperatorSerializer, AffiliateSerializer, KpiDataSerializer
+    SpreadsheetSerializer, SheetSerializer, CellSerializer, FormulaSerializer,
+    PivotTableSerializer, KpiDataSerializer
 )
 from .services.formula_engine import FormulaEngine
 from .pivot_engine import PivotEngine
@@ -65,6 +65,7 @@ class UserRegistrationView(APIView):
             'email': user.email,
             'message': 'Пользователь успешно создан'
         }, status=status.HTTP_201_CREATED)
+
 
 class SpreadsheetViewSet(viewsets.ModelViewSet):
     queryset = Spreadsheet.objects.all().order_by('-id')
@@ -285,40 +286,50 @@ class PivotTableViewSet(viewsets.ModelViewSet):
         return Response({'fields': fields})
 
 
-class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Category.objects.all()
-    serializer_class = CategorySerializer
-    permission_classes = [IsAuthenticated]
-    authentication_classes = []
-    filter_backends = []
-    filterset_fields = ['name']
+# Эндпоинты для справочников (используют itrade)
+@permission_classes([IsAuthenticated])
+class CategoryListView(APIView):
+    authentication_classes = [JWTAuthentication]
+
+    def get(self, request):
+        try:
+            query = """
+            SELECT DISTINCT name 
+            FROM partners_groupoffer 
+            WHERE name NOT IN ('Архив', 'Входящая линия') 
+            AND name IS NOT NULL 
+            AND name != ''
+            ORDER BY name
+            """
+            results = DBService._execute_query(query, [])
+            categories = [row['name'] for row in results if row['name']]
+            return Response(categories)
+        except Exception as e:
+            logger.error(f"Ошибка получения категорий: {e}")
+            return Response([], status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-class OfferViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Offer.objects.all()
-    serializer_class = OfferSerializer
-    permission_classes = [IsAuthenticated]
-    authentication_classes = []
-    filter_backends = []
-    filterset_fields = ['category', 'external_id']
+@permission_classes([IsAuthenticated])
+class AdvertiserListView(APIView):
+    authentication_classes = [JWTAuthentication]
 
-
-class OperatorViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Operator.objects.all()
-    serializer_class = OperatorSerializer
-    permission_classes = []
-    authentication_classes = []
-    filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['username']
-
-
-class AffiliateViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Affiliate.objects.all()
-    serializer_class = AffiliateSerializer
-    permission_classes = []
-    authentication_classes = []
-    filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['external_id']
+    def get(self, request):
+        try:
+            query = """
+            SELECT DISTINCT name 
+            FROM partners_subsystem 
+            WHERE 1=1
+            AND system = 'traffic_light' 
+            AND name IS NOT NULL 
+            AND name != ''
+            ORDER BY name
+            """
+            results = DBService._execute_query(query, [])
+            advertisers = [row['name'] for row in results if row['name']]
+            return Response(advertisers)
+        except Exception as e:
+            logger.error(f"Ошибка получения advertisers: {e}")
+            return Response([], status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class KPIAdvancedAnalysisViewSet(viewsets.ViewSet):
@@ -603,7 +614,12 @@ class LegacyFilterParamsView(APIView):
     def get_categories_list(self):
         query = """SELECT DISTINCT name FROM partners_groupoffer 
                    WHERE name NOT IN ('Архив', 'Входящая линия') AND name IS NOT NULL"""
-        return [row['name'] for row in DBService._execute_query(query, [])]
+        try:
+            results = DBService._execute_query(query, [])
+            return [row['name'] for row in results if row['name']]
+        except Exception as e:
+            logger.error(f"Ошибка получения категорий: {e}")
+            return []
 
 
 class KpiDataViewSet(viewsets.ModelViewSet):

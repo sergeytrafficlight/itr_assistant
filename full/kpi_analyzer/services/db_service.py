@@ -20,6 +20,7 @@ class DBService:
     MAX_RETRIES = 3
     RETRY_DELAY = 1
     BATCH_SIZE = 1000
+
     @staticmethod
     def retry_on_db_error(func):
         """Декоратор для повторных попыток при ошибках БД"""
@@ -33,7 +34,7 @@ class DBService:
                 except Exception as e:
                     last_exception = e
                     if attempt < DBService.MAX_RETRIES:
-                        wait_time = DBService.RETRY_DELAY * (2 ** attempt)  # экспоненциальная задержка
+                        wait_time = DBService.RETRY_DELAY * (2 ** attempt)
                         logger.warning(f"Попытка {attempt + 1}/{DBService.MAX_RETRIES + 1} не удалась. "
                                        f"Ошибка: {e}. Повтор через {wait_time}с")
                         time.sleep(wait_time)
@@ -78,11 +79,10 @@ class DBService:
             return results
         except Exception as e:
             logger.error(f"Ошибка выполнения запроса: {e}")
-            raise  # Пробрасываем исключение для retry механизма
+            raise
 
     @staticmethod
     def _process_in_batches(data: List[Dict], batch_size: int, process_func: callable) -> List[Dict]:
-        """Обрабатывает данные батчами"""
         if not data:
             return []
 
@@ -101,7 +101,6 @@ class DBService:
                 results.extend(batch_results)
             except Exception as e:
                 logger.error(f"Ошибка обработки батча {batch_num + 1}: {e}")
-                # Продолжаем обработку следующих батчей
                 continue
 
         return results
@@ -109,34 +108,34 @@ class DBService:
     @staticmethod
     def get_kpi_plans_data(filters: Optional[Dict] = None) -> List[Dict]:
         query = """
-        SELECT
-            offer_plan.id as call_eff_kpi_id,
-            offer_plan.period_date as call_eff_period_date,
-            offer_plan.offer_id as call_eff_offer_id,
-            aff.external_id as call_eff_affiliate_id,
-            LEFT(DATE_ADD(offer_plan.updated_at, INTERVAL 3 HOUR), 10) as call_eff_plan_update_date,
+          SELECT
+              offer_plan.id as call_eff_kpi_id,
+              offer_plan.period_date as call_eff_period_date,
+              offer_plan.offer_id as call_eff_offer_id,
+              aff.external_id as call_eff_affiliate_id,
+              LEFT(DATE_ADD(offer_plan.updated_at, INTERVAL 3 HOUR), 10) as call_eff_plan_update_date,
 
-            offer_plan.confirmation_price as call_eff_confirmation_price,
-            offer_plan.buyout_price as call_eff_buyout_price,
+              offer_plan.confirmation_price as call_eff_confirmation_price,
+              offer_plan.buyout_price as call_eff_buyout_price,
 
-            offer_plan.operator_efficiency as call_eff_operator_efficiency,
-            LEFT(DATE_ADD(offer_plan.operator_efficiency_updated_at, INTERVAL 3 HOUR), 10) as call_eff_operator_efficiency_update_date,
+              offer_plan.operator_efficiency as call_eff_operator_efficiency,
+              LEFT(DATE_ADD(offer_plan.operator_efficiency_updated_at, INTERVAL 3 HOUR), 10) as call_eff_operator_efficiency_update_date,
 
-            offer_plan.planned_approve_from as call_eff_planned_approve,
-            LEFT(DATE_ADD(offer_plan.planned_approve_update_at, INTERVAL 3 HOUR), 10) as call_eff_approve_update_date,
+              offer_plan.planned_approve_from as call_eff_planned_approve,
+              LEFT(DATE_ADD(offer_plan.planned_approve_update_at, INTERVAL 3 HOUR), 10) as call_eff_approve_update_date,
 
-            offer_plan.planned_buyout_from as call_eff_planned_buyout,
-            LEFT(DATE_ADD(offer_plan.planned_buyout_update_at, INTERVAL 3 HOUR), 10) as call_eff_buyout_update_date,
+              offer_plan.planned_buyout_from as call_eff_planned_buyout,
+              LEFT(DATE_ADD(offer_plan.planned_buyout_update_at, INTERVAL 3 HOUR), 10) as call_eff_buyout_update_date,
 
-            offer_plan.confirmation_price as call_eff_confirmation_price,
-            LEFT(DATE_ADD(offer_plan.confirmation_price_updated_at, INTERVAL 3 HOUR), 10) as call_eff_confirmation_price_update_date,
+              offer_plan.confirmation_price as call_eff_confirmation_price,
+              LEFT(DATE_ADD(offer_plan.confirmation_price_updated_at, INTERVAL 3 HOUR), 10) as call_eff_confirmation_price_update_date,
 
-            offer_plan.buyout_price as call_eff_buyout_price,
-            LEFT(DATE_ADD(offer_plan.buyout_price_updated_at, INTERVAL 3 HOUR), 10) as call_eff_buyout_price_update_date
-        FROM partners_tlofferplanneddataperiod AS offer_plan
-        LEFT JOIN partners_affiliate aff ON aff.id = offer_plan.affiliate_id
-        ORDER BY period_date ASC
-        """
+              offer_plan.buyout_price as call_eff_buyout_price,
+              LEFT(DATE_ADD(offer_plan.buyout_price_updated_at, INTERVAL 3 HOUR), 10) as call_eff_buyout_price_update_date
+          FROM partners_tlofferplanneddataperiod AS offer_plan
+          LEFT JOIN partners_affiliate aff ON aff.id = offer_plan.affiliate_id
+          ORDER BY period_date ASC
+          """
         return DBService._execute_query(query, [])
 
     @staticmethod
@@ -144,7 +143,6 @@ class DBService:
         offer_ids = filters.get('offer_id', [])
         categories = filters.get('category', [])
 
-        # ИСПРАВЛЕНО: полное соответствие эталону
         query = """
         SELECT
             partners_offer.id as id,
@@ -216,9 +214,8 @@ class DBService:
         LEFT JOIN partners_subsystem subsystem ON subsystem.id = pt.subsystem_id
         LEFT JOIN crm_call_oktelltask ccot ON pae.oktell_task_id = ccot.id
         WHERE 1=1
+        AND pae.calldate BETWEEN %s AND %s
         AND pae.billsec >= 30
-        AND pae.calldate >= %s
-        AND pae.calldate < %s
         AND group_offer.name NOT IN ({})
         AND po.id IS NOT NULL
         AND lv_op.username IS NOT NULL
@@ -227,30 +224,32 @@ class DBService:
 
         params = [date_from, date_to] + DBService.EXCLUDED_CATEGORIES
 
-        if categories:
+        if categories and categories != ['']:
             placeholders, cat_params = DBService._prepare_in_values(categories)
             query += f" AND group_offer.name IN {placeholders}"
             params.extend(cat_params)
 
-        if offer_ids:
+        if offer_ids and offer_ids != ['']:
             placeholders, offer_params = DBService._prepare_in_values(offer_ids)
             query += f" AND po.id IN {placeholders}"
             params.extend(offer_params)
 
-        if advertiser:
+        if advertiser and advertiser != ['']:
             placeholders, adv_params = DBService._prepare_in_values(advertiser)
             query += f" AND LOWER(subsystem.name) IN {placeholders}"
             params.extend(adv_params)
 
-        if lv_ops:
+        if lv_ops and lv_ops != ['']:
             placeholders, lv_params = DBService._prepare_in_values(lv_ops)
             query += f" AND LOWER(lv_op.username) IN {placeholders}"
             params.extend(lv_params)
 
-        if aff_ids:
+        if aff_ids and aff_ids != ['']:
             placeholders, aff_params = DBService._prepare_in_values(aff_ids)
             query += f" AND pt.webmaster_id IN {placeholders}"
             params.extend(aff_params)
+
+        query += " ORDER BY pae.calldate ASC"
 
         return DBService._execute_query(query, params)
 
@@ -269,6 +268,7 @@ class DBService:
         lv_ops = [op.lower() for op in filters.get('lv_op', [])]
         aff_ids = filters.get('aff_id', [])
 
+        # ОПТИМИЗИРОВАННЫЙ ЗАПРОС
         query = """
         SELECT
             crm_leads_crmlead.id as call_eff_crm_lead_id,
@@ -297,8 +297,7 @@ class DBService:
         AND offer.id IS NOT NULL
         AND lv_op.username IS NOT NULL
         AND group_offer.name NOT IN ({})
-        AND lv.approved_at >= DATE_SUB(%s, INTERVAL 3 HOUR)  -- ОПТИМИЗАЦИЯ: используем индекс approved_at
-        AND lv.approved_at < DATE_SUB(%s, INTERVAL 3 HOUR)   -- убираем DATE_ADD из условия
+        AND lv.approved_at BETWEEN %s AND %s
         """.format(",".join(["%s"] * len(DBService.EXCLUDED_CATEGORIES)))
 
         params = DBService.EXCLUDED_CATEGORIES + [date_from, date_to]
@@ -345,7 +344,9 @@ class DBService:
         offer_ids = filters.get('offer_id', [])
         categories = filters.get('category', [])
         aff_ids = filters.get('aff_id', [])
+        lv_ops = [op.lower() for op in filters.get('lv_op', [])]
 
+        # ОПТИМИЗИРОВАННЫЙ ЗАПРОС
         query = """
         SELECT
             clc.id as lead_container_crm_lead_id,
@@ -362,7 +363,7 @@ class DBService:
             offer.id as offer_id,
             offer.name as offer_name,
             pt.webmaster_id as aff_id,
-            NULL as lv_username,
+            lv_op.username as lv_username,
             group_offer.name as category_name
         FROM partners_lvlead lv
         INNER JOIN partners_tllead pt ON lv.tl_id = pt.external_id
@@ -372,11 +373,11 @@ class DBService:
         LEFT JOIN crm_leads_crmlead clc ON clc.lvlead_id = lv.id
         LEFT JOIN partners_lvleadstatuses lv_status ON lv.leadvertex_status_id = lv_status.id
         LEFT JOIN partners_subsystem subsystem ON subsystem.id = pt.subsystem_id
+        LEFT JOIN partners_lvoperator lv_op ON lv_op.id = lv.operator_id
         WHERE 1=1
         AND offer.id IS NOT NULL
         AND group_offer.name NOT IN ({})
-        AND lv.created_at >= DATE_SUB(%s, INTERVAL 3 HOUR)
-        AND lv.created_at < DATE_SUB(%s, INTERVAL 3 HOUR)
+        AND lv.created_at BETWEEN %s AND %s
         """.format(",".join(["%s"] * len(DBService.EXCLUDED_CATEGORIES)))
 
         params = DBService.EXCLUDED_CATEGORIES + [date_from, date_to]
@@ -401,6 +402,11 @@ class DBService:
             query += f" AND pt.webmaster_id IN {placeholders}"
             params.extend(aff_params)
 
+        if lv_ops:
+            placeholders, lv_params = DBService._prepare_in_values(lv_ops)
+            query += f" AND LOWER(lv_op.username) IN {placeholders}"
+            params.extend(lv_params)
+
         logger.info(f"Запрос контейнеров лидов за период: {date_from} - {date_to}")
         return DBService._execute_query(query, params)
 
@@ -424,10 +430,8 @@ class DBService:
             if 'отправить позже' in status_verbose_lower:
                 return "Заказ в статусе 'Отправить позже'"
 
-
             if approved_at and canceled_at and canceled_at.strip():
                 try:
-
                     approved_dt = datetime.strptime(approved_at, '%Y-%m-%d %H:%M:%S')
                     canceled_dt = datetime.strptime(canceled_at, '%Y-%m-%d %H:%M:%S')
                     if canceled_dt >= approved_dt:

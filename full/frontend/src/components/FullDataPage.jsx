@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { AgGridReact } from 'ag-grid-react';
+import Select from 'react-select';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-quartz.css';
 import { useNavigate } from 'react-router-dom';
@@ -18,38 +19,68 @@ const FullDataPage = () => {
   const [filters, setFilters] = useState({
     date_from: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     date_to: new Date().toISOString().split('T')[0],
-    category: '',
-    offer_id: '',
-    operator_name: '',
-    aff_id: '',
-    advertiser: '',
-    output: 'Все'
+    output: 'Все',
+    group_rows: 'Нет'
   });
 
   const [categories, setCategories] = useState([]);
   const [advertisers, setAdvertisers] = useState([]);
+
+  const [selectedCategories, setSelectedCategories] = useState([]);
+  const [selectedAdvertisers, setSelectedAdvertisers] = useState([]);
+
   const gridRef = useRef();
   const navigate = useNavigate();
+  const firstRender = useRef(true);
+  const filterDebounce = useRef(null);
+  const abortControllerRef = useRef(null);
 
-  const loadCategoriesAndAdvertisers = useCallback(async () => {
+  // Загрузка справочников (только категории и advertisers)
+  const loadAllDictionaries = useCallback(async () => {
     if (!user) return;
 
     try {
-      const res = await legacyAPI.getFilterParams();
-      setCategories(res.data.available_filters?.categories || []);
-      setAdvertisers(res.data.available_filters?.advertisers || []);
+      const [categoriesRes, advertisersRes] = await Promise.all([
+        legacyAPI.getCategories(),
+        legacyAPI.getAdvertisers()
+      ]);
+
+      setCategories(categoriesRes.data || []);
+      setAdvertisers(advertisersRes.data || []);
+
     } catch (err) {
-      console.error('Ошибка загрузки фильтров:', err);
+      console.error('Ошибка загрузки справочников:', err);
     }
   }, [user]);
 
   const loadStructuredData = useCallback(async () => {
     if (!user) return;
 
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort('Отмена предыдущего запроса');
+    }
+
+    abortControllerRef.current = new AbortController();
+
     setLoading(true);
     setError('');
     try {
-      const res = await kpiAPI.fullStructuredData(filters);
+      // ФОРМИРОВАНИЕ ФИЛЬТРОВ - ИСПРАВЛЕННАЯ ЧАСТЬ
+      const requestFilters = {
+        date_from: filters.date_from,
+        date_to: filters.date_to,
+        category: selectedCategories.length > 0 ? selectedCategories.map(cat => cat.value) : [],
+        advertiser: selectedAdvertisers.length > 0 ? selectedAdvertisers.map(adv => adv.value) : [],
+        output: filters.output,
+        group_rows: filters.group_rows
+      };
+
+      console.log('FullDataPage - Отправляемые фильтры:', requestFilters);
+
+      const res = await kpiAPI.fullStructuredData(requestFilters, {
+        signal: abortControllerRef.current.signal
+      });
+
       if (res.data.success) {
         setStructuredData(res.data.data || []);
         setExpandedCategories(new Set());
@@ -57,12 +88,14 @@ const FullDataPage = () => {
         setError(res.data.error || 'Ошибка загрузки данных');
       }
     } catch (err) {
-      setError('Сервер недоступен или сессия истекла');
-      console.error('Ошибка загрузки структурированных данных:', err);
+      if (err.name !== 'AbortError') {
+        setError('Сервер недоступен или сессия истекла');
+        console.error('Ошибка загрузки структурированных данных:', err);
+      }
     } finally {
       setLoading(false);
     }
-  }, [filters, user]);
+  }, [filters, selectedCategories, selectedAdvertisers, user]);
 
   const toggleCategory = useCallback((categoryDescription) => {
     setExpandedCategories(prev => {
@@ -76,11 +109,25 @@ const FullDataPage = () => {
     })
   }, [])
 
+  // ИСПРАВЛЕННАЯ ФУНКЦИЯ ФИЛЬТРАЦИИ ДАННЫХ
   const convertToFlatData = useCallback((structuredData, expandedSet) => {
     const flatData = []
     let rowIndex = 0
 
     structuredData.forEach(category => {
+      // ФИЛЬТРАЦИЯ ПО КАТЕГОРИЯМ - ДОБАВЛЕНА ПРАВИЛЬНАЯ ЛОГИКА
+      const shouldShowCategory = selectedCategories.length === 0 ||
+        selectedCategories.some(selectedCat => selectedCat.value === category.description);
+
+      if (!shouldShowCategory) return;
+
+      // ФИЛЬТРАЦИЯ ПО ВЫВОДУ "Есть активность"
+      if (filters.output === 'Есть активность') {
+        const hasCalls = category.kpi_stat?.calls_group_effective_count > 0;
+        const hasLeads = category.lead_container?.leads_non_trash_count > 0;
+        if (!hasCalls && !hasLeads) return;
+      }
+
       flatData.push({
         id: rowIndex++,
         level: 0,
@@ -90,7 +137,14 @@ const FullDataPage = () => {
       })
 
       if (expandedSet.has(category.description)) {
+        // ФИЛЬТРАЦИЯ ОФФЕРОВ
         category.offers?.forEach(offer => {
+          if (filters.output === 'Есть активность') {
+            const hasCalls = offer.kpi_stat?.calls_group_effective_count > 0;
+            const hasLeads = offer.lead_container?.leads_non_trash_count > 0;
+            if (!hasCalls && !hasLeads) return;
+          }
+
           flatData.push({
             id: rowIndex++,
             level: 1,
@@ -100,7 +154,14 @@ const FullDataPage = () => {
           })
         })
 
+        // ФИЛЬТРАЦИЯ ОПЕРАТОРОВ
         category.operators?.forEach(operator => {
+          if (filters.output === 'Есть активность') {
+            const hasCalls = operator.kpi_stat?.calls_group_effective_count > 0;
+            const hasLeads = operator.lead_container?.leads_non_trash_count > 0;
+            if (!hasCalls && !hasLeads) return;
+          }
+
           flatData.push({
             id: rowIndex++,
             level: 1,
@@ -110,7 +171,14 @@ const FullDataPage = () => {
           })
         })
 
+        // ФИЛЬТРАЦИЯ АФФИЛИАТОВ
         category.affiliates?.forEach(affiliate => {
+          if (filters.output === 'Есть активность') {
+            const hasCalls = affiliate.kpi_stat?.calls_group_effective_count > 0;
+            const hasLeads = affiliate.lead_container?.leads_non_trash_count > 0;
+            if (!hasCalls && !hasLeads) return;
+          }
+
           flatData.push({
             id: rowIndex++,
             level: 1,
@@ -123,7 +191,15 @@ const FullDataPage = () => {
     })
 
     return flatData
-  }, [])
+  }, [filters.output, selectedCategories])
+
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort('Компонент размонтирован');
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const flatData = convertToFlatData(structuredData, expandedCategories)
@@ -158,9 +234,9 @@ const FullDataPage = () => {
       summary_approve_rec: category.recommended_approve?.value || null,
       summary_buyout_rec: category.recommended_buyout?.value || null,
       summary_check_rec: category.recommended_confirmation_price?.value || null,
-      needs_efficiency_correction: category.needs_efficiency_correction || false,
-      needs_approve_correction: category.needs_approve_correction || false,
-      needs_buyout_correction: category.needs_buyout_correction || false,
+      needs_efficiency_correction: category.kpi_eff_need_correction || false,
+      needs_approve_correction: category.kpi_app_need_correction || false,
+      needs_buyout_correction: category.kpi_buyout_need_correction || false,
       effective_update_date: category.kpi_current_plan?.operator_efficiency_update_date || '',
       approve_update_date: category.kpi_current_plan?.planned_approve_update_date || '',
       buyout_update_date: category.kpi_current_plan?.planned_buyout_update_date || '',
@@ -200,10 +276,10 @@ const FullDataPage = () => {
       summary_approve_rec: offer.recommended_approve?.value || null,
       summary_buyout_rec: offer.recommended_buyout?.value || null,
       summary_check_rec: offer.recommended_confirmation_price?.value || null,
-      needs_efficiency_correction: offer.needs_efficiency_correction || false,
-      needs_approve_correction: offer.needs_approve_correction || false,
-      needs_buyout_correction: offer.needs_buyout_correction || false,
-      needs_confirmation_price_correction: offer.needs_confirmation_price_correction || false,
+      needs_efficiency_correction: offer.kpi_eff_need_correction || false,
+      needs_approve_correction: offer.kpi_app_need_correction || false,
+      needs_buyout_correction: offer.kpi_buyout_need_correction || false,
+      needs_confirmation_price_correction: offer.kpi_confirmation_price_need_correction || false,
       effective_update_date: kpiPlan.operator_efficiency_update_date || '',
       approve_update_date: kpiPlan.planned_approve_update_date || '',
       buyout_update_date: kpiPlan.planned_buyout_update_date || '',
@@ -217,7 +293,7 @@ const FullDataPage = () => {
 
   const createOperatorRow = (operator) => {
     return {
-      operator_name: operator.description,
+      operator_name: operator.key,
       description: operator.description,
       calls_effective: operator.kpi_stat?.calls_group_effective_count || 0,
       leads_raw: operator.lead_container?.leads_raw_count || 0,
@@ -237,9 +313,9 @@ const FullDataPage = () => {
       recommended_approve: operator.recommended_approve?.value || null,
       recommended_buyout: operator.recommended_buyout?.value || null,
       recommended_confirmation_price: operator.recommended_confirmation_price?.value || null,
-      needs_efficiency_correction: operator.needs_efficiency_correction || false,
-      needs_approve_correction: operator.needs_approve_correction || false,
-      needs_buyout_correction: operator.needs_buyout_correction || false,
+      needs_efficiency_correction: operator.kpi_eff_need_correction || false,
+      needs_approve_correction: operator.kpi_app_need_correction || false,
+      needs_buyout_correction: operator.kpi_buyout_need_correction || false,
     }
   }
 
@@ -265,9 +341,9 @@ const FullDataPage = () => {
       recommended_approve: affiliate.recommended_approve?.value || null,
       recommended_buyout: affiliate.recommended_buyout?.value || null,
       recommended_confirmation_price: affiliate.recommended_confirmation_price?.value || null,
-      needs_efficiency_correction: affiliate.needs_efficiency_correction || false,
-      needs_approve_correction: affiliate.needs_approve_correction || false,
-      needs_buyout_correction: affiliate.needs_buyout_correction || false,
+      needs_efficiency_correction: affiliate.kpi_eff_need_correction || false,
+      needs_approve_correction: affiliate.kpi_app_need_correction || false,
+      needs_buyout_correction: affiliate.kpi_buyout_need_correction || false,
     }
   }
 
@@ -278,7 +354,7 @@ const FullDataPage = () => {
       width: 60,
       pinned: 'left',
       cellRenderer: params => {
-        if (!params.data.isCategory) {
+        if (!params.data?.isCategory) {
           return <span style={{ marginLeft: '20px' }}>↳</span>
         }
         return (
@@ -304,13 +380,13 @@ const FullDataPage = () => {
       width: 120,
       pinned: 'left',
       cellRenderer: params => {
-        if (params.data.type === 'Категория') {
+        if (params.data?.type === 'Категория') {
           return params.data.description
         }
-        return params.data.type
+        return params.data?.type || ''
       },
       cellStyle: params => {
-        const type = params.data.type
+        const type = params.data?.type
         if (type === 'Категория') return { backgroundColor: '#e3f2fd', fontWeight: 'bold' }
         if (type === 'Оффер') return { backgroundColor: '#f3e5f5' }
         if (type === 'Оператор') return { backgroundColor: '#e8f5e8' }
@@ -323,7 +399,7 @@ const FullDataPage = () => {
       field: "offer_id",
       width: 100,
       cellStyle: params => {
-        if (!params.data.offer_id) return { paddingLeft: '20px' }
+        if (!params.data?.offer_id) return { paddingLeft: '20px' }
         return null
       }
     },
@@ -332,7 +408,7 @@ const FullDataPage = () => {
       field: "offer_name",
       width: 200,
       cellStyle: params => {
-        if (!params.data.offer_id) return { paddingLeft: '20px' }
+        if (!params.data?.offer_id) return { paddingLeft: '20px' }
         return null
       }
     },
@@ -514,25 +590,29 @@ const FullDataPage = () => {
       headerName: "Эфф. Рек.",
       field: "summary_effective_rec",
       width: 100,
-      type: 'numericColumn'
+      type: 'numericColumn',
+      valueFormatter: p => p.value?.toFixed(1) || '-'
     },
     {
       headerName: "Апп. Рек.",
       field: "summary_approve_rec",
       width: 100,
-      type: 'numericColumn'
+      type: 'numericColumn',
+      valueFormatter: p => p.value?.toFixed(1) || '-'
     },
     {
       headerName: "Чек Рек.",
       field: "summary_check_rec",
       width: 100,
-      type: 'numericColumn'
+      type: 'numericColumn',
+      valueFormatter: p => p.value?.toFixed(1) || '-'
     },
     {
       headerName: "Выкуп. Рек.",
       field: "summary_buyout_rec",
       width: 100,
-      type: 'numericColumn'
+      type: 'numericColumn',
+      valueFormatter: p => p.value?.toFixed(1) || '-'
     },
     {
       headerName: "Ссылка",
@@ -562,19 +642,120 @@ const FullDataPage = () => {
     autoHeight: true,
   }
 
-  // Загрузка фильтров при монтировании и при изменении пользователя
-  useEffect(() => {
-    if (!authLoading && user) {
-      loadCategoriesAndAdvertisers();
-    }
-  }, [authLoading, user, loadCategoriesAndAdvertisers]);
+  const customStyles = {
+    control: (base) => ({
+      ...base,
+      minHeight: '40px',
+      border: '1px solid #ddd',
+      boxShadow: 'none',
+      '&:hover': {
+        border: '1px solid #28a745'
+      }
+    }),
+    menu: (base) => ({
+      ...base,
+      zIndex: 9999
+    }),
+    multiValue: (base) => ({
+      ...base,
+      backgroundColor: '#d4edda',
+      color: '#155724',
+      border: '1px solid #c3e6cb'
+    }),
+    multiValueLabel: (base) => ({
+      ...base,
+      color: '#155724',
+      fontWeight: '500'
+    }),
+    multiValueRemove: (base) => ({
+      ...base,
+      color: '#155724',
+      '&:hover': {
+        backgroundColor: '#f5c6cb',
+        color: '#721c24'
+      }
+    }),
+    option: (base, state) => ({
+      ...base,
+      backgroundColor: state.isSelected
+        ? '#28a745'
+        : state.isFocused
+          ? '#e8f5e8'
+          : base.backgroundColor,
+      color: state.isSelected
+        ? 'white'
+        : state.isFocused
+          ? '#155724'
+          : base.color,
+    }),
+    indicatorsContainer: (base) => ({
+      ...base,
+      color: '#6c757d'
+    }),
+    indicatorSeparator: (base) => ({
+      ...base,
+      backgroundColor: '#ddd'
+    }),
+    dropdownIndicator: (base) => ({
+      ...base,
+      color: '#6c757d',
+      '&:hover': {
+        color: '#28a745'
+      }
+    }),
+    clearIndicator: (base) => ({
+      ...base,
+      color: '#6c757d',
+      '&:hover': {
+        color: '#dc3545'
+      }
+    }),
+    placeholder: (base) => ({
+      ...base,
+      color: '#6c757d'
+    })
+  };
 
-  // Загрузка данных при монтировании и при изменении пользователя
+  // Подготовка опций для селектов (только категории и advertisers)
+  const categoryOptions = categories.map(cat => ({ value: cat, label: cat }));
+  const advertiserOptions = advertisers.map(adv => ({ value: adv, label: adv }));
+
   useEffect(() => {
     if (!authLoading && user) {
-      loadStructuredData();
+      loadAllDictionaries();
     }
-  }, [authLoading, user, loadStructuredData]);
+  }, [authLoading, user, loadAllDictionaries]);
+
+  useEffect(() => {
+    const init = async () => {
+      if (!authLoading && user) {
+        await loadAllDictionaries();
+        if (!firstRender.current) {
+          await loadStructuredData();
+        }
+        firstRender.current = false;
+      }
+    };
+    init();
+  }, [authLoading, user]);
+
+  // ИСПРАВЛЕННЫЙ useEffect ДЛЯ ФИЛЬТРОВ
+  useEffect(() => {
+    if (firstRender.current) {
+      return;
+    }
+
+    if (filterDebounce.current) clearTimeout(filterDebounce.current);
+    filterDebounce.current = setTimeout(() => {
+      if (!authLoading && user) {
+        loadStructuredData();
+      }
+    }, 800);
+
+    return () => {
+      if (filterDebounce.current) clearTimeout(filterDebounce.current);
+    };
+  }, [filters, selectedCategories, selectedAdvertisers, authLoading, user, loadStructuredData]);
 
   const exportToCSV = () => {
     if (gridRef.current?.api) {
@@ -588,13 +769,11 @@ const FullDataPage = () => {
     setFilters({
       date_from: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
       date_to: new Date().toISOString().split('T')[0],
-      category: '',
-      offer_id: '',
-      operator_name: '',
-      aff_id: '',
-      advertiser: '',
-      output: 'Все'
+      output: 'Все',
+      group_rows: 'Нет'
     })
+    setSelectedCategories([]);
+    setSelectedAdvertisers([]);
   }
 
   const expandAll = () => {
@@ -606,7 +785,6 @@ const FullDataPage = () => {
     setExpandedCategories(new Set())
   }
 
-  // Показываем загрузку если проверяется авторизация
   if (authLoading) {
     return <div className="loading">Проверка авторизации...</div>
   }
@@ -635,6 +813,8 @@ const FullDataPage = () => {
 
       <div className="filters-section">
         <h3>Фильтры</h3>
+
+        {/* Первая строка фильтров */}
         <div className="filter-row">
           <div className="filter-group">
             <label>Дата с:</label>
@@ -653,36 +833,56 @@ const FullDataPage = () => {
             />
           </div>
           <div className="filter-group">
-            <label>Категория:</label>
-            <select
-              value={filters.category}
-              onChange={e => setFilters({...filters, category: e.target.value})}
-            >
-              <option value="">Все категории</option>
-              {categories.map(cat => (
-                <option key={cat} value={cat}>{cat}</option>
-              ))}
+            <label>Вывод:</label>
+            <select value={filters.output} onChange={e => setFilters({...filters, output: e.target.value})}>
+              <option value="Все">Все</option>
+              <option value="Есть активность">Активные</option>
             </select>
           </div>
           <div className="filter-group">
-            <label>Advertiser:</label>
-            <select
-              value={filters.advertiser}
-              onChange={e => setFilters({...filters, advertiser: e.target.value})}
-            >
-              <option value="">Все advertiser</option>
-              {advertisers.map(adv => (
-                <option key={adv} value={adv}>{adv}</option>
-              ))}
+            <label>Группировка:</label>
+            <select value={filters.group_rows} onChange={e => setFilters({...filters, group_rows: e.target.value})}>
+              <option value="Нет">Без группировки</option>
+              <option value="Да">С группировкой</option>
             </select>
+          </div>
+        </div>
+
+        {/* Вторая строка фильтров - только категории и advertisers */}
+        <div className="filter-row">
+          <div className="filter-group wide">
+            <label>Категории:</label>
+            <Select
+              isMulti
+              options={categoryOptions}
+              value={selectedCategories}
+              onChange={setSelectedCategories}
+              placeholder="Выберите категории..."
+              styles={customStyles}
+              className="react-select-container"
+              classNamePrefix="react-select"
+            />
+          </div>
+          <div className="filter-group wide">
+            <label>Advertisers:</label>
+            <Select
+              isMulti
+              options={advertiserOptions}
+              value={selectedAdvertisers}
+              onChange={setSelectedAdvertisers}
+              placeholder="Выберите advertisers..."
+              styles={customStyles}
+              className="react-select-container"
+              classNamePrefix="react-select"
+            />
           </div>
         </div>
 
         <div className="action-buttons">
           <button onClick={loadStructuredData} disabled={loading} className="btn primary">
-            {loading ? 'Загрузка...' : 'Обновить'}
+            {loading ? '🔄 Загрузка...' : '📊 Обновить'}
           </button>
-          <button onClick={resetFilters} className="btn secondary">Сброс</button>
+          <button onClick={resetFilters} className="btn secondary">🔄 Сброс</button>
         </div>
       </div>
 
@@ -734,4 +934,4 @@ const FullDataPage = () => {
   )
 }
 
-export default FullDataPage
+export default FullDataPage;
