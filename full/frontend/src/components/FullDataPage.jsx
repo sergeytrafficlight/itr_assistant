@@ -31,8 +31,6 @@ const FullDataPage = () => {
 
   const gridRef = useRef();
   const navigate = useNavigate();
-  const firstRender = useRef(true);
-  const filterDebounce = useRef(null);
   const abortControllerRef = useRef(null);
 
   // Загрузка справочников (только категории и advertisers)
@@ -53,7 +51,8 @@ const FullDataPage = () => {
     }
   }, [user]);
 
-  const loadStructuredData = useCallback(async () => {
+  // ОСНОВНАЯ ФУНКЦИЯ ЗАГРУЗКИ ДАННЫХ - ВЫЗЫВАЕТСЯ ТОЛЬКО ПО КНОПКЕ
+  const loadStructuredData = async () => {
     if (!user) return;
 
     if (abortControllerRef.current) {
@@ -65,7 +64,6 @@ const FullDataPage = () => {
     setLoading(true);
     setError('');
     try {
-      // ФОРМИРОВАНИЕ ФИЛЬТРОВ - ИСПРАВЛЕННАЯ ЧАСТЬ
       const requestFilters = {
         date_from: filters.date_from,
         date_to: filters.date_to,
@@ -95,7 +93,7 @@ const FullDataPage = () => {
     } finally {
       setLoading(false);
     }
-  }, [filters, selectedCategories, selectedAdvertisers, user]);
+  };
 
   const toggleCategory = useCallback((categoryDescription) => {
     setExpandedCategories(prev => {
@@ -109,19 +107,17 @@ const FullDataPage = () => {
     })
   }, [])
 
-  // ИСПРАВЛЕННАЯ ФУНКЦИЯ ФИЛЬТРАЦИИ ДАННЫХ
+  // Функция преобразования данных
   const convertToFlatData = useCallback((structuredData, expandedSet) => {
     const flatData = []
     let rowIndex = 0
 
     structuredData.forEach(category => {
-      // ФИЛЬТРАЦИЯ ПО КАТЕГОРИЯМ - ДОБАВЛЕНА ПРАВИЛЬНАЯ ЛОГИКА
       const shouldShowCategory = selectedCategories.length === 0 ||
         selectedCategories.some(selectedCat => selectedCat.value === category.description);
 
       if (!shouldShowCategory) return;
 
-      // ФИЛЬТРАЦИЯ ПО ВЫВОДУ "Есть активность"
       if (filters.output === 'Есть активность') {
         const hasCalls = category.kpi_stat?.calls_group_effective_count > 0;
         const hasLeads = category.lead_container?.leads_non_trash_count > 0;
@@ -137,7 +133,6 @@ const FullDataPage = () => {
       })
 
       if (expandedSet.has(category.description)) {
-        // ФИЛЬТРАЦИЯ ОФФЕРОВ
         category.offers?.forEach(offer => {
           if (filters.output === 'Есть активность') {
             const hasCalls = offer.kpi_stat?.calls_group_effective_count > 0;
@@ -154,7 +149,6 @@ const FullDataPage = () => {
           })
         })
 
-        // ФИЛЬТРАЦИЯ ОПЕРАТОРОВ
         category.operators?.forEach(operator => {
           if (filters.output === 'Есть активность') {
             const hasCalls = operator.kpi_stat?.calls_group_effective_count > 0;
@@ -171,7 +165,6 @@ const FullDataPage = () => {
           })
         })
 
-        // ФИЛЬТРАЦИЯ АФФИЛИАТОВ
         category.affiliates?.forEach(affiliate => {
           if (filters.output === 'Есть активность') {
             const hasCalls = affiliate.kpi_stat?.calls_group_effective_count > 0;
@@ -201,10 +194,20 @@ const FullDataPage = () => {
     };
   }, []);
 
+  // ИНИЦИАЛИЗАЦИЯ - ТОЛЬКО ЗАГРУЗКА СПРАВОЧНИКОВ
+  useEffect(() => {
+    if (!authLoading && user) {
+      loadAllDictionaries();
+    }
+  }, [authLoading, user, loadAllDictionaries]);
+
+  // ПРЕОБРАЗОВАНИЕ ДАННЫХ ПРИ ИХ ИЗМЕНЕНИИ
   useEffect(() => {
     const flatData = convertToFlatData(structuredData, expandedCategories)
     setRowData(flatData)
   }, [structuredData, expandedCategories, convertToFlatData])
+
+  // УДАЛЕН useEffect который автоматически запускал запросы при изменении фильтров
 
   const createCategoryRow = (category) => {
     return {
@@ -720,43 +723,6 @@ const FullDataPage = () => {
   const categoryOptions = categories.map(cat => ({ value: cat, label: cat }));
   const advertiserOptions = advertisers.map(adv => ({ value: adv, label: adv }));
 
-  useEffect(() => {
-    if (!authLoading && user) {
-      loadAllDictionaries();
-    }
-  }, [authLoading, user, loadAllDictionaries]);
-
-  useEffect(() => {
-    const init = async () => {
-      if (!authLoading && user) {
-        await loadAllDictionaries();
-        if (!firstRender.current) {
-          await loadStructuredData();
-        }
-        firstRender.current = false;
-      }
-    };
-    init();
-  }, [authLoading, user]);
-
-  // ИСПРАВЛЕННЫЙ useEffect ДЛЯ ФИЛЬТРОВ
-  useEffect(() => {
-    if (firstRender.current) {
-      return;
-    }
-
-    if (filterDebounce.current) clearTimeout(filterDebounce.current);
-    filterDebounce.current = setTimeout(() => {
-      if (!authLoading && user) {
-        loadStructuredData();
-      }
-    }, 800);
-
-    return () => {
-      if (filterDebounce.current) clearTimeout(filterDebounce.current);
-    };
-  }, [filters, selectedCategories, selectedAdvertisers, authLoading, user, loadStructuredData]);
-
   const exportToCSV = () => {
     if (gridRef.current?.api) {
       gridRef.current.api.exportDataAsCsv({
@@ -774,6 +740,9 @@ const FullDataPage = () => {
     })
     setSelectedCategories([]);
     setSelectedAdvertisers([]);
+    // Очищаем данные при сбросе фильтров
+    setStructuredData([]);
+    setRowData([]);
   }
 
   const expandAll = () => {
@@ -804,7 +773,7 @@ const FullDataPage = () => {
             <button onClick={collapseAll} className="btn secondary" style={{ marginRight: '10px' }}>
               Свернуть все
             </button>
-            <button onClick={exportToCSV} className="btn primary">
+            <button onClick={exportToCSV} disabled={structuredData.length === 0} className="btn primary">
               Экспорт в CSV
             </button>
           </div>
@@ -892,18 +861,24 @@ const FullDataPage = () => {
         <div className="table-header">
           <h3>Полные данные KPI ({rowData.length} строк)</h3>
           <div className="table-info">
-            Прокрутите горизонтально для просмотра всех колонок • Цветовые коды:
-            <span className="color-code category">Категория</span>
-            <span className="color-code offer">Оффер</span>
-            <span className="color-code operator">Оператор</span>
-            <span className="color-code affiliate">Вебмастер</span>
+            {structuredData.length === 0 ? 'Нажмите "Обновить" для загрузки данных' : 'Прокрутите горизонтально для просмотра всех колонок • Цветовые коды:'}
+            {structuredData.length > 0 && (
+              <>
+                <span className="color-code category">Категория</span>
+                <span className="color-code offer">Оффер</span>
+                <span className="color-code operator">Оператор</span>
+                <span className="color-code affiliate">Вебмастер</span>
+              </>
+            )}
           </div>
         </div>
 
         {loading ? (
           <div className="loading-indicator">Загрузка структурированных данных...</div>
         ) : rowData.length === 0 ? (
-          <div className="no-data-message">Нет данных</div>
+          <div className="no-data-message">
+            {structuredData.length === 0 ? 'Нажмите "Обновить" для загрузки данных' : 'Нет данных для отображения'}
+          </div>
         ) : (
           <div className="ag-theme-quartz full-data-grid" style={{ height: 800, width: '100%' }}>
             <AgGridReact

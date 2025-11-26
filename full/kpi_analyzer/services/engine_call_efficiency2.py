@@ -355,13 +355,18 @@ def push_lead_to_engine(sql_data: Dict, offer_id: int, stat: Stat):
     stat.push_lead(sql_data)
 
 
-def finalize_engine_stat(stat: Stat, kpi_list: KpiList):
+def finalize_engine_stat(stat: Stat, kpi_list: KpiList, leads_data: List[Dict] = None):
+    """Модифицированная функция, которая принимает готовые данные лидов"""
     global _log_counter
 
     def is_fake_approve_func(lead_dict: Dict) -> str:
         return DBService.is_fake_approve(lead_dict)
 
     if not stat.finalized:
+        if leads_data:
+            for lead in leads_data:
+                stat.push_lead(lead)
+
         stat.finalize(kpi_list, is_fake_approve_func)
     else:
         if _log_counter < _MAX_LOGS:

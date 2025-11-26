@@ -632,6 +632,7 @@ class CategoryItem:
             offer.set_confirmation_price_need_correction(
                 f"Текущий чек подтверждения ({confirmation_price}) < Максимального в группе ({self.max_confirmation_price})")
 
+
 class Stat:
     def __init__(self):
         self.category: Dict[str, CategoryItem] = {}
@@ -639,6 +640,7 @@ class Stat:
         self.leads_container_data: List[Dict] = []
 
     def _load_kpi_data(self, kpi_plans_data: List[Dict]):
+        """Загрузка KPI данных"""
         self.kpi_list = KpiList()
         for plan in kpi_plans_data or []:
             try:
@@ -646,14 +648,25 @@ class Stat:
             except Exception as e:
                 logger.error(f"KPI load error: {e}")
 
-    def _process_leads_container_data(self, filters: Dict):
-        leads_container = DBService.get_leads_container(filters)
-        self.leads_container_data = leads_container
+    def finalize_with_data(self, kpi_plans_data: List[Dict], leads_container_data: List[Dict]):
+        """Финальная обработка с готовыми данными"""
+        self.leads_container_data = leads_container_data
+        self._load_kpi_data(kpi_plans_data)
+        self._process_leads_container_data()
+
+        for cat in self.category.values():
+            cat.finalize(self.kpi_list)
+
+    def _process_leads_container_data(self):
+        """Обработка контейнеров лидов без вызова DBService"""
+        if not self.leads_container_data:
+            logger.warning("No leads container data provided")
+            return
 
         category_leads = {}
         offer_leads = {}
 
-        for lead in leads_container:
+        for lead in self.leads_container_data:
             category_name = lead.get('category_name', 'No category')
             offer_id = str(lead.get('offer_id', ''))
 
@@ -738,15 +751,8 @@ class Stat:
             'offer_name': sql_data.get('offer_name', ''),
             'aff_id': sql_data.get('call_eff_affiliate_id'),
             'lv_operator': sql_data.get('lv_username', 'un_operator')
-
         }
         self.category[cat_name].push_call(call_data, sql_data)
-
-    def finalize(self, kpi_plans_data: List[Dict], filters: Dict):
-        self._load_kpi_data(kpi_plans_data)
-        self._process_leads_container_data(filters)
-        for cat in self.category.values():
-            cat.finalize(self.kpi_list)
 
     def get_categories_list(self) -> List[CategoryItem]:
         return list(self.category.values())
@@ -765,20 +771,29 @@ class OpAnalyzeKPI:
     def __init__(self):
         self.stat = Stat()
 
+    def run_analysis_with_data(self, kpi_plans_data, offers_data, leads_data, calls_data, leads_container_data,
+                               filters):
+        """Новый метод, который принимает готовые данные вместо фильтров"""
+        logger.info(">>> Starting KPI analysis with pre-loaded data...")
+
+        for offer in offers_data:
+            self.stat.push_offer(offer)
+        for lead in leads_data:
+            self.stat.push_lead(lead)
+        for call in calls_data:
+            self.stat.push_call(call)
+
+        self.stat.finalize_with_data(kpi_plans_data, leads_container_data)
+        return self.stat
+
     def run_analysis(self, filters: Dict) -> Stat:
-        logger.info(">>> Starting KPI analysis...")
+        """Устаревший метод для обратной совместимости"""
+        logger.warning("Using deprecated run_analysis method - consider switching to run_analysis_with_data")
 
         kpi_plans = DBService.get_kpi_plans_data()
         offers = DBService.get_offers(filters)
         leads = DBService.get_leads(filters)
         calls = DBService.get_calls(filters)
+        leads_container = DBService.get_leads_container(filters)
 
-        for offer in offers:
-            self.stat.push_offer(offer)
-        for lead in leads:
-            self.stat.push_lead(lead)
-        for call in calls:
-            self.stat.push_call(call)
-
-        self.stat.finalize(kpi_plans, filters)
-        return self.stat
+        return self.run_analysis_with_data(kpi_plans, offers, leads, calls, leads_container, filters)

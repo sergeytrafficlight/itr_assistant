@@ -30,8 +30,6 @@ const AnalyticsPage = () => {
   const [error, setError] = useState('');
   const gridRef = useRef();
   const abortControllerRef = useRef(null);
-  const firstRender = useRef(true);
-  const filterDebounce = useRef(null);
   const navigate = useNavigate();
 
   // Проверка прав администратора
@@ -64,7 +62,8 @@ const AnalyticsPage = () => {
     }
   };
 
-  const loadAdvancedAnalysis = useCallback(async () => {
+  // ОСНОВНАЯ ФУНКЦИЯ ЗАГРУЗКИ ДАННЫХ - ВЫЗЫВАЕТСЯ ТОЛЬКО ПО КНОПКЕ
+  const loadAdvancedAnalysis = async () => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort('Отмена предыдущего запроса');
     }
@@ -75,7 +74,7 @@ const AnalyticsPage = () => {
     setError('');
 
     try {
-      // ФОРМИРОВАНИЕ ФИЛЬТРОВ БЕЗ УДАЛЕННЫХ ЭНДПОИНТОВ
+      // ФОРМИРОВАНИЕ ФИЛЬТРОВ
       const requestFilters = {
         date_from: filters.date_from,
         date_to: filters.date_to,
@@ -117,7 +116,7 @@ const AnalyticsPage = () => {
     } finally {
       setLoading(false);
     }
-  }, [filters, selectedCategories, selectedAdvertisers]);
+  };
 
   useEffect(() => {
     return () => {
@@ -126,6 +125,18 @@ const AnalyticsPage = () => {
       }
     };
   }, []);
+
+  // ИНИЦИАЛИЗАЦИЯ - ТОЛЬКО ЗАГРУЗКА СПРАВОЧНИКОВ, НЕ ДАННЫХ
+  useEffect(() => {
+    const init = async () => {
+      await checkAdminRights();
+      await loadAllDictionaries();
+      // НЕ ВЫЗЫВАЕМ loadAdvancedAnalysis здесь - данные грузятся только по кнопке
+    };
+    init();
+  }, []);
+
+  // УДАЛЕН useEffect который автоматически запускал запросы при изменении фильтров
 
   const getRowData = useCallback(() => {
     if (!advancedData.length) return [];
@@ -318,6 +329,10 @@ const AnalyticsPage = () => {
     });
     setSelectedCategories([]);
     setSelectedAdvertisers([]);
+    // Очищаем данные при сбросе фильтров
+    setAdvancedData([]);
+    setRecommendations([]);
+    setPerformance({});
   };
 
   const customStyles = {
@@ -398,29 +413,6 @@ const AnalyticsPage = () => {
   const categoryOptions = categories.map(cat => ({ value: cat, label: cat }));
   const advertiserOptions = advertisers.map(adv => ({ value: adv, label: adv }));
 
-  useEffect(() => {
-    const init = async () => {
-      await checkAdminRights();
-      await loadAllDictionaries();
-      if (!firstRender.current) {
-        await loadAdvancedAnalysis();
-      }
-      firstRender.current = false;
-    };
-    init();
-  }, []);
-
-  useEffect(() => {
-    if (firstRender.current) {
-      return;
-    }
-    if (filterDebounce.current) clearTimeout(filterDebounce.current);
-    filterDebounce.current = setTimeout(() => {
-      loadAdvancedAnalysis();
-    }, 800);
-    return () => clearTimeout(filterDebounce.current);
-  }, [filters, selectedCategories, selectedAdvertisers, loadAdvancedAnalysis]);
-
   return (
     <div className="analytics-page">
       <header className="analytics-header">
@@ -444,7 +436,7 @@ const AnalyticsPage = () => {
             )}
           </div>
         </div>
-        {performance && (
+        {performance && Object.keys(performance).length > 0 && (
           <div className="performance-info">
             <strong>Производительность:</strong> {performance.total_seconds}с | Лидов: {performance.leads_count} | Звонков: {performance.calls_count}
           </div>
@@ -522,7 +514,7 @@ const AnalyticsPage = () => {
           <button onClick={loadAdvancedAnalysis} disabled={loading} className="btn primary">
             {loading ? '🔄 Загрузка...' : '📊 Анализ'}
           </button>
-          <button onClick={exportToCSV} className="btn secondary">📥 CSV</button>
+          <button onClick={exportToCSV} disabled={advancedData.length === 0} className="btn secondary">📥 CSV</button>
           <button onClick={() => navigate('/full-data')} className="btn secondary">📋 Полные данные</button>
           <button onClick={resetFilters} className="btn secondary">🔄 Сброс</button>
         </div>
@@ -559,7 +551,9 @@ const AnalyticsPage = () => {
         {loading ? (
           <div className="loading-indicator">Загрузка данных...</div>
         ) : getRowData().length === 0 ? (
-          <div className="no-data-message">Нет данных для отображения</div>
+          <div className="no-data-message">
+            {advancedData.length === 0 ? 'Нажмите "Анализ" для загрузки данных' : 'Нет данных для отображения'}
+          </div>
         ) : (
           <div className="ag-theme-quartz" style={{ height: 600, width: '100%' }}>
             <AgGridReact

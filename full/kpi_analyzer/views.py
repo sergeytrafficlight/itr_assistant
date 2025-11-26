@@ -345,28 +345,22 @@ class KPIAdvancedAnalysisViewSet(viewsets.ViewSet):
         logger.info(f"Запуск KPI анализа: {filter_params.get('date_from')} - {filter_params.get('date_to')}")
 
         try:
+
+            kpi_plans = DBService.get_kpi_plans_data()
+            offers = DBService.get_offers(filter_params)
+            leads = DBService.get_leads(filter_params)
+            calls = DBService.get_calls(filter_params)
+            leads_container = DBService.get_leads_container(filter_params)
+
             analyzer = OpAnalyzeKPI()
-            stat = analyzer.run_analysis(filter_params)
-
-            if hasattr(stat, 'category'):
-                logger.info(f"stat.category существует, количество: {len(stat.category)}")
-            else:
-                logger.info("stat.kpi_stat не существует")
-                return Response({'success': False, 'error': 'Invalid stat structure'}, status=400)
-
-            total_leads = 0
-            total_calls = 0
-            category_count = 0
-
-            for cat_name, category in stat.category.items():
-                category_count += 1
-                if hasattr(category, 'kpi_stat'):
-                    if hasattr(category.kpi_stat, 'leads_effective_count'):
-                        cat_leads = category.kpi_stat.leads_effective_count
-                        total_leads += cat_leads
-                    if hasattr(category.kpi_stat, 'calls_group_effective_count'):
-                        cat_calls = category.kpi_stat.calls_group_effective_count
-                        total_calls += cat_calls
+            stat = analyzer.run_analysis_with_data(
+                kpi_plans_data=kpi_plans,
+                offers_data=offers,
+                leads_data=leads,
+                calls_data=calls,
+                leads_container_data=leads_container,
+                filters=filter_params
+            )
 
             formatter = KPIOutputFormatter()
             result_data = formatter.format_for_frontend(
@@ -375,7 +369,6 @@ class KPIAdvancedAnalysisViewSet(viewsets.ViewSet):
             )
 
             execution_time = round(time.time() - start_time, 2)
-
             response = {
                 'success': True,
                 'data': result_data['data'],
@@ -383,18 +376,14 @@ class KPIAdvancedAnalysisViewSet(viewsets.ViewSet):
                 'recommendations': result_data['recommendations'],
                 'performance': {
                     'total_seconds': execution_time,
-                    'leads_count': total_leads,
-                    'calls_count': total_calls,
+                    'leads_count': len(leads),
+                    'calls_count': len(calls),
                 }
             }
 
         except Exception as e:
             logger.error(f"Ошибка анализа KPI: {e}", exc_info=True)
             response = {'success': False, 'error': str(e), 'data': []}
-
-        finally:
-            execution_time = round(time.time() - start_time, 2)
-            logger.info(f"KPI анализ завершён за {execution_time}s")
 
         return Response(response)
 
@@ -408,8 +397,16 @@ class KPIAdvancedAnalysisViewSet(viewsets.ViewSet):
             f"Запуск полного KPI анализа для FullDataPage: {filter_params.get('date_from')} - {filter_params.get('date_to')}")
 
         try:
+            kpi_plans = DBService.get_kpi_plans_data()
+            offers = DBService.get_offers(filter_params)
+            leads = DBService.get_leads(filter_params)
+            calls = DBService.get_calls(filter_params)
+            leads_container = DBService.get_leads_container(filter_params)
+
             analyzer = OpAnalyzeKPI()
-            stat = analyzer.run_analysis(filter_params)
+            stat = analyzer.run_analysis_with_data(
+                kpi_plans, offers, leads, calls, leads_container, filter_params
+            )
 
             if hasattr(stat, 'category'):
                 logger.info(f"Обработано категорий: {len(stat.category)}")
@@ -466,8 +463,16 @@ class KPIAdvancedAnalysisViewSet(viewsets.ViewSet):
             f"Запуск генерации полной таблицы KPI: {filter_params.get('date_from')} - {filter_params.get('date_to')}")
 
         try:
+            kpi_plans = DBService.get_kpi_plans_data()
+            offers = DBService.get_offers(filter_params)
+            leads = DBService.get_leads(filter_params)
+            calls = DBService.get_calls(filter_params)
+            leads_container = DBService.get_leads_container(filter_params)
+
             analyzer = OpAnalyzeKPI()
-            stat = analyzer.run_analysis(filter_params)
+            stat = analyzer.run_analysis_with_data(
+                kpi_plans, offers, leads, calls, leads_container, filter_params
+            )
 
             formatter = KPIOutputFormatter()
             table_data = formatter.create_output_structure(stat)
