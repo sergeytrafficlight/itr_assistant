@@ -200,14 +200,14 @@ class DBService:
             lv_op.username as lv_username,
             group_offer.name as category_name,
             pt.webmaster_id as call_eff_affiliate_id
-        FROM partners_atscallevent pae
-        INNER JOIN partners_lvlead lv ON pae.lvlead_id = lv.id
-        INNER JOIN partners_tllead pt ON lv.tl_id = pt.external_id
-        INNER JOIN partners_offer po ON pt.offer_id = po.id
+        FROM partners_atscallevent pae FORCE INDEX (calldate, lvlead_id)
+        INNER JOIN partners_lvlead lv FORCE INDEX (tl_id, operator_id) ON pae.lvlead_id = lv.id
+        INNER JOIN partners_tllead pt FORCE INDEX (external_id_2, offer_id, affiliate_id) ON lv.tl_id = pt.external_id
+        INNER JOIN partners_offer po FORCE INDEX (PRIMARY) ON pt.offer_id = po.id
         INNER JOIN partners_assignedoffer assigned_offer ON assigned_offer.offer_id = po.id
         INNER JOIN partners_groupoffer group_offer ON assigned_offer.group_id = group_offer.id
         LEFT JOIN crm_call_calldata ccd ON ccd.id = pae.assigned_call_data_id
-        LEFT JOIN partners_lvoperator lv_op ON lv_op.id = pae.lvoperator_id
+        LEFT JOIN partners_lvoperator lv_op FORCE INDEX (PRIMARY) ON lv_op.id = pae.lvoperator_id
         LEFT JOIN partners_userbasedonlvoperator pu ON pu.operator_id = pae.lvoperator_id
         LEFT JOIN users_user uu ON uu.id = pu.user_id
         LEFT JOIN users_department ud ON ud.id = uu.department_id
