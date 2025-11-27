@@ -268,7 +268,6 @@ class DBService:
         lv_ops = [op.lower() for op in filters.get('lv_op', [])]
         aff_ids = filters.get('aff_id', [])
 
-        # ОПТИМИЗИРОВАННЫЙ ЗАПРОС
         query = """
         SELECT
             crm_leads_crmlead.id as call_eff_crm_lead_id,
@@ -283,24 +282,23 @@ class DBService:
             group_offer.name as category_name,
             tl_lead.webmaster_id as aff_id
         FROM partners_lvlead lv
+        INNER JOIN partners_tllead tl_lead ON lv.tl_id = tl_lead.external_id
+        INNER JOIN partners_offer offer ON tl_lead.offer_id = offer.id
+        INNER JOIN partners_assignedoffer assigned_offer ON assigned_offer.offer_id = offer.id
+        INNER JOIN partners_groupoffer group_offer ON assigned_offer.group_id = group_offer.id
         LEFT JOIN crm_leads_crmlead ON crm_leads_crmlead.lvlead_id = lv.id
         LEFT JOIN partners_lvoperator lv_op ON lv_op.id = lv.operator_id
         LEFT JOIN partners_userbasedonlvoperator pu ON pu.operator_id = lv.operator_id
         LEFT JOIN users_user uu ON uu.id = pu.user_id
-        LEFT JOIN partners_lvleadstatuses AS lv_status ON lv.leadvertex_status_id = lv_status.id
-        LEFT JOIN partners_tllead AS tl_lead ON lv.tl_id = tl_lead.external_id
-        LEFT JOIN partners_subsystem AS subsystem ON subsystem.id = tl_lead.subsystem_id
-        LEFT JOIN partners_offer as offer ON tl_lead.offer_id = offer.id
-        LEFT JOIN partners_assignedoffer assigned_offer ON assigned_offer.offer_id = offer.id
-        LEFT JOIN partners_groupoffer group_offer ON assigned_offer.group_id = group_offer.id
-        WHERE 1=1
+        LEFT JOIN partners_lvleadstatuses lv_status ON lv.leadvertex_status_id = lv_status.id
+        LEFT JOIN partners_subsystem subsystem ON tl_lead.subsystem_id = subsystem.id
+        WHERE lv.approved_at BETWEEN %s AND %s
+        AND group_offer.name NOT IN ({})
         AND offer.id IS NOT NULL
         AND lv_op.username IS NOT NULL
-        AND group_offer.name NOT IN ({})
-        AND lv.approved_at BETWEEN %s AND %s
         """.format(",".join(["%s"] * len(DBService.EXCLUDED_CATEGORIES)))
 
-        params = DBService.EXCLUDED_CATEGORIES + [date_from, date_to]
+        params = [date_from, date_to] + DBService.EXCLUDED_CATEGORIES
 
         if categories:
             placeholders, cat_params = DBService._prepare_in_values(categories)
@@ -346,7 +344,6 @@ class DBService:
         aff_ids = filters.get('aff_id', [])
         lv_ops = [op.lower() for op in filters.get('lv_op', [])]
 
-        # ОПТИМИЗИРОВАННЫЙ ЗАПРОС
         query = """
         SELECT
             clc.id as lead_container_crm_lead_id,
@@ -372,15 +369,14 @@ class DBService:
         INNER JOIN partners_groupoffer group_offer ON assigned_offer.group_id = group_offer.id
         LEFT JOIN crm_leads_crmlead clc ON clc.lvlead_id = lv.id
         LEFT JOIN partners_lvleadstatuses lv_status ON lv.leadvertex_status_id = lv_status.id
-        LEFT JOIN partners_subsystem subsystem ON subsystem.id = pt.subsystem_id
+        LEFT JOIN partners_subsystem subsystem ON pt.subsystem_id = subsystem.id
         LEFT JOIN partners_lvoperator lv_op ON lv_op.id = lv.operator_id
-        WHERE 1=1
-        AND offer.id IS NOT NULL
+        WHERE lv.created_at BETWEEN %s AND %s
         AND group_offer.name NOT IN ({})
-        AND lv.created_at BETWEEN %s AND %s
+        AND offer.id IS NOT NULL
         """.format(",".join(["%s"] * len(DBService.EXCLUDED_CATEGORIES)))
 
-        params = DBService.EXCLUDED_CATEGORIES + [date_from, date_to]
+        params = [date_from, date_to] + DBService.EXCLUDED_CATEGORIES
 
         if categories:
             placeholders, cat_params = DBService._prepare_in_values(categories)
