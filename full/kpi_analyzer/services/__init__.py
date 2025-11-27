@@ -10,8 +10,7 @@ from .engine_call_efficiency2 import (
     Lead,
     CallGroup
 )
-from .recommendation_engine import Recommendation, RecommendationEngine
-from .kpi_analyzer import CommonItem, CategoryItem, OfferItem, OpAnalyzeKPI, KpiStat, Stat
+from .kpi_analyzer import CommonItem, CategoryItem, OfferItem, OpAnalyzeKPI, KpiStat, Stat, Recommendation, RecommendationEngine
 from .formula_engine import FormulaEngine
 from .db_service import DBService
 from .output_formatter import KPIOutputFormatter

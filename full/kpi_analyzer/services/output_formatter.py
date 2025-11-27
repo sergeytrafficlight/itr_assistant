@@ -62,6 +62,7 @@ class KPIOutputFormatter:
     def _add_category_row(self, pd: List, category: CategoryItem):
         row = [self.BLANK_KEY] * 46
         row[0] = self.ROW_TITLE_CATEGORY
+        row[1] = category.key
         row[2] = category.description
 
         s = category.kpi_stat
@@ -78,40 +79,45 @@ class KPIOutputFormatter:
         row[13] = s.effective_rate
         row[14] = s.expecting_effective_rate
 
-        if category.recommended_efficiency:
-            row[17] = category.recommended_efficiency.value
-            row[37] = category.recommended_efficiency.value
+        if category.recommended_efficiency and category.recommended_efficiency.value is not None:
+            row[17] = self.gs.print_float(category.recommended_efficiency.value)
+            row[37] = self.gs.print_float(category.recommended_efficiency.value)
 
-        if category.recommended_approve:
-            row[23] = category.recommended_approve.value
-            row[39] = category.recommended_approve.value
+        if category.recommended_approve and category.recommended_approve.value is not None:
+            row[23] = self.gs.print_float(category.recommended_approve.value)
+            row[39] = self.gs.print_float(category.recommended_approve.value)
 
-        if category.recommended_buyout:
-            row[29] = category.recommended_buyout.value
-            row[43] = category.recommended_buyout.value
+        if category.recommended_buyout and category.recommended_buyout.value is not None:
+            row[29] = self.gs.print_float(category.recommended_buyout.value)
+            row[43] = self.gs.print_float(category.recommended_buyout.value)
 
-        if category.recommended_confirmation_price:
-            row[41] = category.recommended_confirmation_price.value
+        if category.recommended_confirmation_price and category.recommended_confirmation_price.value is not None:
+            row[41] = self.gs.print_float(category.recommended_confirmation_price.value)
 
-        row[21] = category.approve_percent_fact
-        row[27] = category.buyout_percent_fact
-        row[33] = category.trash_percent
-        row[34] = category.raw_to_approve_percent
-        row[35] = category.raw_to_buyout_percent
-        row[36] = category.non_trash_to_buyout_percent
+        row[21] = self.gs.print_float(category.approve_percent_fact or 0)
+        row[27] = self.gs.print_float(category.buyout_percent_fact or 0)
+        row[33] = self.gs.print_float(category.trash_percent or 0)
+        row[34] = self.gs.print_float(category.raw_to_approve_percent or 0)
+        row[35] = self.gs.print_float(category.raw_to_buyout_percent or 0)
+        row[36] = self.gs.print_float(category.non_trash_to_buyout_percent or 0)
+
+        if category.kpi_eff_need_correction:
+            row[19] = category.kpi_eff_need_correction_str
+        if category.kpi_app_need_correction:
+            row[25] = category.kpi_app_need_correction_str
+        if category.kpi_buyout_need_correction:
+            row[31] = category.kpi_buyout_need_correction_str
+
+        row[38] = "Да" if category.kpi_eff_need_correction else ""
+        row[40] = "Да" if category.kpi_app_need_correction else ""
+        row[44] = "Да" if category.kpi_buyout_need_correction else ""
 
         correction_flags = []
         if category.kpi_eff_need_correction:
-            row[19] = category.kpi_eff_need_correction_str
-            row[38] = "Да"
             correction_flags.append("Эффективность")
         if category.kpi_app_need_correction:
-            row[25] = category.kpi_app_need_correction_str
-            row[40] = "Да"
             correction_flags.append("Аппрув")
         if category.kpi_buyout_need_correction:
-            row[31] = category.kpi_buyout_need_correction_str
-            row[44] = "Да"
             correction_flags.append("Выкуп")
 
         if correction_flags:
@@ -122,8 +128,9 @@ class KPIOutputFormatter:
     def _add_offer_row(self, pd: List, offer: OfferItem, category: CategoryItem):
         row = [self.BLANK_KEY] * 46
         row[0] = self.ROW_TITLE_OFFER
-        row[1] = offer.key
-        row[2] = offer.description
+        row[1] = category.key
+        row[2] = offer.key
+        row[3] = offer.description
 
         s = offer.kpi_stat
         lc = offer.lead_container
@@ -162,27 +169,24 @@ class KPIOutputFormatter:
         if offer.recommended_confirmation_price and offer.recommended_confirmation_price.value is not None:
             row[41] = self.gs.print_float(offer.recommended_confirmation_price.value)
 
-        row[21] = offer.approve_percent_fact
-        row[27] = offer.buyout_percent_fact
-        row[33] = offer.trash_percent
-        row[34] = offer.raw_to_approve_percent
-        row[35] = offer.raw_to_buyout_percent
-        row[36] = offer.non_trash_to_buyout_percent
+        row[21] = self.gs.print_float(offer.approve_percent_fact or 0)
+        row[27] = self.gs.print_float(offer.buyout_percent_fact or 0)
+        row[33] = self.gs.print_float(offer.trash_percent or 0)
+        row[34] = self.gs.print_float(offer.raw_to_approve_percent or 0)
+        row[35] = self.gs.print_float(offer.raw_to_buyout_percent or 0)
+        row[36] = self.gs.print_float(offer.non_trash_to_buyout_percent or 0)
 
         if offer.kpi_eff_need_correction:
             row[19] = offer.kpi_eff_need_correction_str
-            row[38] = "Да"
-
         if offer.kpi_app_need_correction:
             row[25] = offer.kpi_app_need_correction_str
-            row[40] = "Да"
-
         if offer.kpi_buyout_need_correction:
             row[31] = offer.kpi_buyout_need_correction_str
-            row[44] = "Да"
 
-        if offer.kpi_confirmation_price_need_correction:
-            row[42] = "Да"
+        row[38] = "Да" if offer.kpi_eff_need_correction else ""
+        row[40] = "Да" if offer.kpi_app_need_correction else ""
+        row[42] = "Да" if offer.kpi_confirmation_price_need_correction else ""
+        row[44] = "Да" if offer.kpi_buyout_need_correction else ""
 
         row[45] = f'=HYPERLINK("https://admin.crm.itvx.biz/partners/tloffer/{offer.key}/change/";"{offer.key}")'
 
@@ -218,12 +222,12 @@ class KPIOutputFormatter:
             row[29] = self.gs.print_float(operator.recommended_buyout.value)
             row[43] = self.gs.print_float(operator.recommended_buyout.value)
 
-        row[21] = operator.approve_percent_fact
-        row[27] = operator.buyout_percent_fact
-        row[33] = operator.trash_percent
-        row[34] = operator.raw_to_approve_percent
-        row[35] = operator.raw_to_buyout_percent
-        row[36] = operator.non_trash_to_buyout_percent
+        row[21] = self.gs.print_float(operator.approve_percent_fact or 0)
+        row[27] = self.gs.print_float(operator.buyout_percent_fact or 0)
+        row[33] = self.gs.print_float(operator.trash_percent or 0)
+        row[34] = self.gs.print_float(operator.raw_to_approve_percent or 0)
+        row[35] = self.gs.print_float(operator.raw_to_buyout_percent or 0)
+        row[36] = self.gs.print_float(operator.non_trash_to_buyout_percent or 0)
 
         if operator.kpi_eff_need_correction:
             row[19] = operator.kpi_eff_need_correction_str
@@ -270,12 +274,12 @@ class KPIOutputFormatter:
             row[29] = self.gs.print_float(aff.recommended_buyout.value)
             row[43] = self.gs.print_float(aff.recommended_buyout.value)
 
-        row[21] = aff.approve_percent_fact
-        row[27] = aff.buyout_percent_fact
-        row[33] = aff.trash_percent
-        row[34] = aff.raw_to_approve_percent
-        row[35] = aff.raw_to_buyout_percent
-        row[36] = aff.non_trash_to_buyout_percent
+        row[21] = self.gs.print_float(aff.approve_percent_fact or 0)
+        row[27] = self.gs.print_float(aff.buyout_percent_fact or 0)
+        row[33] = self.gs.print_float(aff.trash_percent or 0)
+        row[34] = self.gs.print_float(aff.raw_to_approve_percent or 0)
+        row[35] = self.gs.print_float(aff.raw_to_buyout_percent or 0)
+        row[36] = self.gs.print_float(aff.non_trash_to_buyout_percent or 0)
 
         if aff.kpi_eff_need_correction:
             row[19] = aff.kpi_eff_need_correction_str

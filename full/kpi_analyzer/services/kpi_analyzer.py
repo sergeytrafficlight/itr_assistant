@@ -8,11 +8,70 @@ from .engine_call_efficiency2 import (
     KpiList, Stat as CallStat, push_lead_to_engine, push_call_to_engine,
     finalize_engine_stat
 )
-from .recommendation_engine import RecommendationEngine, Recommendation
 from .statistics import safe_div, safe_float
 from .db_service import DBService
 
 logger = logging.getLogger(__name__)
+
+
+class Recommendation:
+    def __init__(self, value, comment: str = ""):
+        self.value = value
+        self.comment = comment
+
+
+class RecommendationEngine:
+    def __init__(self, calls_count_for_analyze: int = 30):
+        self.calls_count_for_analyze = calls_count_for_analyze
+
+    def sort_operators_by_efficiency(self, operators: Dict[str, Any]) -> List[Any]:
+        result1 = []
+        result2 = []
+
+        for operator in operators.values():
+            if (operator.kpi_stat.calls_group_effective_count >= self.calls_count_for_analyze and
+                    operator.kpi_stat.effective_rate > 0.0):
+                result1.append(operator)
+            else:
+                result2.append(operator)
+
+        result1.sort(key=lambda x: x.kpi_stat.effective_rate)
+        return result1 + result2
+
+    def get_operators_for_recommendations(self, operators: List[Any]) -> Recommendation:
+        eff_operators = 0
+        for operator in operators:
+            if (operator.kpi_stat.effective_rate > 0.0 and
+                    operator.kpi_stat.calls_group_effective_count >= self.calls_count_for_analyze):
+                eff_operators += 1
+
+        eff_operators_count = round(eff_operators * 0.4)
+
+        if eff_operators_count < 3:
+            return Recommendation(None, "Недостаточно операторов для расчета плана")
+
+        if eff_operators_count > 5:
+            eff_operators_count = 5
+
+        result = []
+        comment = f"Операторов для анализа всего: {eff_operators_count}\n"
+        calls_total = 0
+        leads_total = 0
+
+        for i, operator in enumerate(operators):
+            if len(result) >= eff_operators_count:
+                break
+            if (operator.kpi_stat.effective_rate > 0.0 and
+                    operator.kpi_stat.calls_group_effective_count >= self.calls_count_for_analyze):
+                result.append(operator.key)
+                calls_total += operator.kpi_stat.calls_group_effective_count
+                leads_total += operator.kpi_stat.leads_effective_count
+                comment += f"{operator.key} звонков: {operator.kpi_stat.calls_group_effective_count} аппрувов: {operator.kpi_stat.leads_effective_count}\n"
+
+        comment += f"Звонков: {calls_total} лидов: {leads_total}\n"
+        comment += f"Результат: {safe_div(calls_total, leads_total)}\n"
+
+        return Recommendation(result, comment)
 
 
 class KpiStat:
@@ -87,7 +146,6 @@ class CommonItem:
 
         if self.lead_container.leads_non_trash_count >= 10:
             current_approve = self.approve_percent_fact or 0
-
 
             if current_approve < 20:
                 self.set_kpi_app_need_correction(f"Критически низкий аппрув: {current_approve:.1f}%")
@@ -400,19 +458,30 @@ class CategoryItem:
                 self.kpi_buyout_need_correction_str = f"Низкий выкуп категории: {current_buyout:.1f}%"
 
     def _calculate_recommended_efficiency(self):
-        if not self.operator_recommended.value:
-            return Recommendation(None, "Недостаточно операторов для принятия решения")
-
         calls_total = 0
         leads_total = 0
         comment = ""
 
-        for operator in self.operator_sorted:
-            if operator.key not in self.operator_recommended.value:
-                continue
-            calls_total += operator.kpi_stat.calls_group_effective_count
-            leads_total += operator.kpi_stat.leads_effective_count
-            comment += f"{operator.key} звонков: {operator.kpi_stat.calls_group_effective_count} аппрувов: {operator.kpi_stat.leads_effective_count}\n"
+        if self.operator_recommended.value is None:
+            return Recommendation(None, "Недостаточно операторов для расчета плана")
+
+        if isinstance(self.operator_recommended.value, list) and not self.operator_recommended.value:
+            for operator in self.operator_sorted:
+                if (operator.kpi_stat.effective_rate > 0.0 and
+                        operator.kpi_stat.calls_group_effective_count >= self.recommendation_engine.calls_count_for_analyze):
+                    calls_total += operator.kpi_stat.calls_group_effective_count
+                    leads_total += operator.kpi_stat.leads_effective_count
+                    comment += f"{operator.key} звонков: {operator.kpi_stat.calls_group_effective_count} аппрувов: {operator.kpi_stat.leads_effective_count}\n"
+        else:
+            recommended_operators = self.operator_recommended.value
+            if not isinstance(recommended_operators, list):
+                recommended_operators = [recommended_operators] if recommended_operators else []
+
+            for operator in self.operator_sorted:
+                if operator.key in recommended_operators:
+                    calls_total += operator.kpi_stat.calls_group_effective_count
+                    leads_total += operator.kpi_stat.leads_effective_count
+                    comment += f"{operator.key} звонков: {operator.kpi_stat.calls_group_effective_count} аппрувов: {operator.kpi_stat.leads_effective_count}\n"
 
         result = safe_div(calls_total, leads_total)
         comment += f"Звонков: {calls_total} лидов: {leads_total}\n"
@@ -439,12 +508,9 @@ class CategoryItem:
                 perhaps_app_count = self.lead_container.leads_approved_count
 
             rec_approve = safe_div(perhaps_app_count, self.lead_container.leads_non_trash_count) * 100
-
-
             rec_approve = max(0, min(rec_approve, 100))
 
             comment = f"Текущая эффективность: {effective_percent:.1f}%, коррекция -> вероятное к-во аппрувов: {perhaps_app_count:.0f}"
-
 
             if rec_approve < fact_approve:
                 comment += f"\nФактический аппрув ({fact_approve:.1f}) выше рекоммендуемого ({rec_approve:.1f}), коррекция рекоммендации до фактического аппрува"
@@ -529,7 +595,6 @@ class CategoryItem:
             self.expecting_approve_leads = None
             self.expecting_buyout_leads = None
 
-
         total_non_trash = self.lead_container.leads_non_trash_count
         total_approved = self.lead_container.leads_approved_count
 
@@ -594,44 +659,6 @@ class CategoryItem:
 
         self._calculate_category_correction_flags()
 
-    def _validate_offer_kpi(self, offer: OfferItem):
-        if not offer.kpi_current_plan:
-            return
-
-        planned_approve = safe_float(offer.kpi_current_plan.planned_approve)
-        planned_buyout = safe_float(offer.kpi_current_plan.planned_buyout)
-        recommended_approve = safe_float(
-            offer.recommended_approve.value) if offer.recommended_approve and offer.recommended_approve.value else None
-        recommended_buyout = safe_float(
-            offer.recommended_buyout.value) if offer.recommended_buyout and offer.recommended_buyout.value else None
-        confirmation_price = safe_float(offer.kpi_current_plan.confirmation_price)
-
-        if planned_approve is None or planned_approve < 0.1:
-            offer.set_kpi_app_need_correction(
-                f"KPI аппрува не установлен или имеет предельно низкое значение: {planned_approve}")
-        elif recommended_approve is None:
-            pass
-        elif abs(planned_approve - recommended_approve) > 1:
-            offer.set_kpi_app_need_correction(
-                f"Плановый % аппрува ({planned_approve:.1f}) отличается от рекоммендации ({recommended_approve:.1f})")
-
-        if planned_buyout is None or planned_buyout < 0.1:
-            offer.set_kpi_buyout_need_correction(
-                f"KPI выкупа не установлен или имеет предельно низкое значение: {planned_buyout}")
-        elif recommended_buyout is None:
-            pass
-        elif abs(planned_buyout - recommended_buyout) > 1:
-            offer.set_kpi_buyout_need_correction(
-                f"Плановый % выкупа ({planned_buyout:.1f}) отличается от рекоммендации ({recommended_buyout:.1f})")
-
-        if confirmation_price is None or confirmation_price < 1:
-            offer.set_confirmation_price_need_correction("Чек подтверждения не установлен или предельно мал")
-        elif self.max_confirmation_price == 0 or self.max_confirmation_price < 1:
-            offer.set_confirmation_price_need_correction("Не удалось определить максимальный чек в группе")
-        elif confirmation_price != self.max_confirmation_price:
-            offer.set_confirmation_price_need_correction(
-                f"Текущий чек подтверждения ({confirmation_price}) < Максимального в группе ({self.max_confirmation_price})")
-
 
 class Stat:
     def __init__(self):
@@ -640,7 +667,6 @@ class Stat:
         self.leads_container_data: List[Dict] = []
 
     def _load_kpi_data(self, kpi_plans_data: List[Dict]):
-        """Загрузка KPI данных"""
         self.kpi_list = KpiList()
         for plan in kpi_plans_data or []:
             try:
@@ -649,7 +675,6 @@ class Stat:
                 logger.error(f"KPI load error: {e}")
 
     def finalize_with_data(self, kpi_plans_data: List[Dict], leads_container_data: List[Dict]):
-        """Финальная обработка с готовыми данными"""
         self.leads_container_data = leads_container_data
         self._load_kpi_data(kpi_plans_data)
         self._process_leads_container_data()
@@ -658,7 +683,6 @@ class Stat:
             cat.finalize(self.kpi_list)
 
     def _process_leads_container_data(self):
-        """Обработка контейнеров лидов без вызова DBService"""
         if not self.leads_container_data:
             logger.warning("No leads container data provided")
             return
@@ -773,7 +797,6 @@ class OpAnalyzeKPI:
 
     def run_analysis_with_data(self, kpi_plans_data, offers_data, leads_data, calls_data, leads_container_data,
                                filters):
-        """Новый метод, который принимает готовые данные вместо фильтров"""
         logger.info(">>> Starting KPI analysis with pre-loaded data...")
 
         for offer in offers_data:
@@ -787,7 +810,6 @@ class OpAnalyzeKPI:
         return self.stat
 
     def run_analysis(self, filters: Dict) -> Stat:
-        """Устаревший метод для обратной совместимости"""
         logger.warning("Using deprecated run_analysis method - consider switching to run_analysis_with_data")
 
         kpi_plans = DBService.get_kpi_plans_data()

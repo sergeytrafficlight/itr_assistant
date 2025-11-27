@@ -136,8 +136,6 @@ const AnalyticsPage = () => {
     init();
   }, []);
 
-  // УДАЛЕН useEffect который автоматически запускал запросы при изменении фильтров
-
   const getRowData = useCallback(() => {
     if (!advancedData.length) return [];
     const rows = [];

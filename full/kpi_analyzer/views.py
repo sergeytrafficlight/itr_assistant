@@ -345,7 +345,6 @@ class KPIAdvancedAnalysisViewSet(viewsets.ViewSet):
         logger.info(f"Запуск KPI анализа: {filter_params.get('date_from')} - {filter_params.get('date_to')}")
 
         try:
-
             kpi_plans = DBService.get_kpi_plans_data()
             offers = DBService.get_offers(filter_params)
             leads = DBService.get_leads(filter_params)

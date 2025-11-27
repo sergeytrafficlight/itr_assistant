@@ -107,7 +107,7 @@ const FullDataPage = () => {
     })
   }, [])
 
-  // Функция преобразования данных
+  // Функция преобразования данных для новой структуры output_formatter
   const convertToFlatData = useCallback((structuredData, expandedSet) => {
     const flatData = []
     let rowIndex = 0
@@ -133,6 +133,7 @@ const FullDataPage = () => {
       })
 
       if (expandedSet.has(category.description)) {
+        // Офферы
         category.offers?.forEach(offer => {
           if (filters.output === 'Есть активность') {
             const hasCalls = offer.kpi_stat?.calls_group_effective_count > 0;
@@ -149,6 +150,7 @@ const FullDataPage = () => {
           })
         })
 
+        // Операторы
         category.operators?.forEach(operator => {
           if (filters.output === 'Есть активность') {
             const hasCalls = operator.kpi_stat?.calls_group_effective_count > 0;
@@ -165,6 +167,7 @@ const FullDataPage = () => {
           })
         })
 
+        // Вебмастеры
         category.affiliates?.forEach(affiliate => {
           if (filters.output === 'Есть активность') {
             const hasCalls = affiliate.kpi_stat?.calls_group_effective_count > 0;
@@ -207,9 +210,10 @@ const FullDataPage = () => {
     setRowData(flatData)
   }, [structuredData, expandedCategories, convertToFlatData])
 
-  // УДАЛЕН useEffect который автоматически запускал запросы при изменении фильтров
-
+  // Создание строки категории для новой структуры данных
   const createCategoryRow = (category) => {
+    const kpiPlan = category.kpi_current_plan || {};
+
     return {
       type: 'Категория',
       description: category.description,
@@ -219,34 +223,35 @@ const FullDataPage = () => {
       effective_percent: category.kpi_stat?.effective_percent || 0,
       effective_rate_fact: category.kpi_stat?.effective_rate || 0,
       effective_rate_plan: category.kpi_stat?.expecting_effective_rate || 0,
-      effective_recommendation: category.recommended_efficiency?.value || null,
+      effective_recommendation: category.recommended_efficiency || null,
       leads_non_trash: category.lead_container?.leads_non_trash_count || 0,
       leads_approved: category.lead_container?.leads_approved_count || 0,
       approve_percent_fact: category.approve_percent_fact || 0,
       approve_percent_plan: category.approve_rate_plan || 0,
-      approve_recommendation: category.recommended_approve?.value || null,
+      approve_recommendation: category.recommended_approve || null,
       leads_buyout: category.lead_container?.leads_buyout_count || 0,
       buyout_percent_fact: category.buyout_percent_fact || 0,
-      buyout_percent_plan: category.recommended_buyout?.value || null,
-      buyout_recommendation: category.recommended_buyout?.value || null,
+      buyout_percent_plan: category.buyout_rate_plan || 0,
+      buyout_recommendation: category.recommended_buyout || null,
       trash_percent: category.trash_percent || 0,
       raw_to_approve_percent: category.raw_to_approve_percent || 0,
       raw_to_buyout_percent: category.raw_to_buyout_percent || 0,
       non_trash_to_buyout_percent: category.non_trash_to_buyout_percent || 0,
-      summary_effective_rec: category.recommended_efficiency?.value || null,
-      summary_approve_rec: category.recommended_approve?.value || null,
-      summary_buyout_rec: category.recommended_buyout?.value || null,
-      summary_check_rec: category.recommended_confirmation_price?.value || null,
-      needs_efficiency_correction: category.kpi_eff_need_correction || false,
-      needs_approve_correction: category.kpi_app_need_correction || false,
-      needs_buyout_correction: category.kpi_buyout_need_correction || false,
-      effective_update_date: category.kpi_current_plan?.operator_efficiency_update_date || '',
-      approve_update_date: category.kpi_current_plan?.planned_approve_update_date || '',
-      buyout_update_date: category.kpi_current_plan?.planned_buyout_update_date || '',
-      plan_type: category.kpi_current_plan?.plan_type || '',
+      summary_effective_rec: category.recommended_efficiency || null,
+      summary_approve_rec: category.recommended_approve || null,
+      summary_buyout_rec: category.recommended_buyout || null,
+      summary_check_rec: category.recommended_confirmation_price || null,
+      needs_efficiency_correction: category.needs_efficiency_correction || false,
+      needs_approve_correction: category.needs_approve_correction || false,
+      needs_buyout_correction: category.needs_buyout_correction || false,
+      effective_update_date: kpiPlan.operator_efficiency_update_date || '',
+      approve_update_date: kpiPlan.planned_approve_update_date || '',
+      buyout_update_date: kpiPlan.planned_buyout_update_date || '',
+      plan_type: kpiPlan.plan_type || '',
     }
   }
 
+  // Создание строки оффера для новой структуры данных
   const createOfferRow = (offer, category) => {
     const kpiPlan = offer.kpi_current_plan || {}
 
@@ -261,28 +266,28 @@ const FullDataPage = () => {
       effective_percent: offer.kpi_stat?.effective_percent || 0,
       effective_rate_fact: offer.kpi_stat?.effective_rate || 0,
       effective_rate_plan: kpiPlan.operator_efficiency || 0,
-      effective_recommendation: offer.recommended_efficiency?.value || null,
+      effective_recommendation: offer.recommended_efficiency || null,
       leads_non_trash: offer.lead_container?.leads_non_trash_count || 0,
       leads_approved: offer.lead_container?.leads_approved_count || 0,
       approve_percent_fact: offer.approve_percent_fact || 0,
       approve_percent_plan: kpiPlan.planned_approve || 0,
-      approve_recommendation: offer.recommended_approve?.value || null,
+      approve_recommendation: offer.recommended_approve || null,
       leads_buyout: offer.lead_container?.leads_buyout_count || 0,
       buyout_percent_fact: offer.buyout_percent_fact || 0,
       buyout_percent_plan: kpiPlan.planned_buyout || 0,
-      buyout_recommendation: offer.recommended_buyout?.value || null,
+      buyout_recommendation: offer.recommended_buyout || null,
       trash_percent: offer.trash_percent || 0,
       raw_to_approve_percent: offer.raw_to_approve_percent || 0,
       raw_to_buyout_percent: offer.raw_to_buyout_percent || 0,
       non_trash_to_buyout_percent: offer.non_trash_to_buyout_percent || 0,
-      summary_effective_rec: offer.recommended_efficiency?.value || null,
-      summary_approve_rec: offer.recommended_approve?.value || null,
-      summary_buyout_rec: offer.recommended_buyout?.value || null,
-      summary_check_rec: offer.recommended_confirmation_price?.value || null,
-      needs_efficiency_correction: offer.kpi_eff_need_correction || false,
-      needs_approve_correction: offer.kpi_app_need_correction || false,
-      needs_buyout_correction: offer.kpi_buyout_need_correction || false,
-      needs_confirmation_price_correction: offer.kpi_confirmation_price_need_correction || false,
+      summary_effective_rec: offer.recommended_efficiency || null,
+      summary_approve_rec: offer.recommended_approve || null,
+      summary_buyout_rec: offer.recommended_buyout || null,
+      summary_check_rec: offer.recommended_confirmation_price || null,
+      needs_efficiency_correction: offer.needs_efficiency_correction || false,
+      needs_approve_correction: offer.needs_approve_correction || false,
+      needs_buyout_correction: offer.needs_buyout_correction || false,
+      needs_confirmation_price_correction: offer.needs_confirmation_price_correction || false,
       effective_update_date: kpiPlan.operator_efficiency_update_date || '',
       approve_update_date: kpiPlan.planned_approve_update_date || '',
       buyout_update_date: kpiPlan.planned_buyout_update_date || '',
@@ -294,6 +299,7 @@ const FullDataPage = () => {
     }
   }
 
+  // Создание строки оператора для новой структуры данных
   const createOperatorRow = (operator) => {
     return {
       operator_name: operator.key,
@@ -312,16 +318,17 @@ const FullDataPage = () => {
       raw_to_approve_percent: operator.raw_to_approve_percent || 0,
       raw_to_buyout_percent: operator.raw_to_buyout_percent || 0,
       non_trash_to_buyout_percent: operator.non_trash_to_buyout_percent || 0,
-      recommended_efficiency: operator.recommended_efficiency?.value || null,
-      recommended_approve: operator.recommended_approve?.value || null,
-      recommended_buyout: operator.recommended_buyout?.value || null,
-      recommended_confirmation_price: operator.recommended_confirmation_price?.value || null,
-      needs_efficiency_correction: operator.kpi_eff_need_correction || false,
-      needs_approve_correction: operator.kpi_app_need_correction || false,
-      needs_buyout_correction: operator.kpi_buyout_need_correction || false,
+      recommended_efficiency: operator.recommended_efficiency || null,
+      recommended_approve: operator.recommended_approve || null,
+      recommended_buyout: operator.recommended_buyout || null,
+      recommended_confirmation_price: operator.recommended_confirmation_price || null,
+      needs_efficiency_correction: operator.needs_efficiency_correction || false,
+      needs_approve_correction: operator.needs_approve_correction || false,
+      needs_buyout_correction: operator.needs_buyout_correction || false,
     }
   }
 
+  // Создание строки вебмастера для новой структуры данных
   const createAffiliateRow = (affiliate) => {
     return {
       aff_id: affiliate.key,
@@ -340,13 +347,13 @@ const FullDataPage = () => {
       raw_to_approve_percent: affiliate.raw_to_approve_percent || 0,
       raw_to_buyout_percent: affiliate.raw_to_buyout_percent || 0,
       non_trash_to_buyout_percent: affiliate.non_trash_to_buyout_percent || 0,
-      recommended_efficiency: affiliate.recommended_efficiency?.value || null,
-      recommended_approve: affiliate.recommended_approve?.value || null,
-      recommended_buyout: affiliate.recommended_buyout?.value || null,
-      recommended_confirmation_price: affiliate.recommended_confirmation_price?.value || null,
-      needs_efficiency_correction: affiliate.kpi_eff_need_correction || false,
-      needs_approve_correction: affiliate.kpi_app_need_correction || false,
-      needs_buyout_correction: affiliate.kpi_buyout_need_correction || false,
+      recommended_efficiency: affiliate.recommended_efficiency || null,
+      recommended_approve: affiliate.recommended_approve || null,
+      recommended_buyout: affiliate.recommended_buyout || null,
+      recommended_confirmation_price: affiliate.recommended_confirmation_price || null,
+      needs_efficiency_correction: affiliate.needs_efficiency_correction || false,
+      needs_approve_correction: affiliate.needs_approve_correction || false,
+      needs_buyout_correction: affiliate.needs_buyout_correction || false,
     }
   }
 
