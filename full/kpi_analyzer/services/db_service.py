@@ -185,41 +185,45 @@ class DBService:
         aff_ids = filters.get('aff_id', [])
 
         query = """
-        SELECT
-            pae.id as call_eff_id,
-            ccd.id as call_eff_crm_id,
-            po.id as call_eff_offer_id,
-            po.name as offer_name,
-            pae.uniqueid as call_eff_uniqueid,
-            LEFT(DATE_ADD(pae.calldate, INTERVAL 3 HOUR), 10) AS call_eff_calldate,
-            ccd.crm_lead_id as call_eff_crm_lead_id,
-            uu.id as call_eff_operator_id,
-            pae.billsec as call_eff_billsec,
-            ccd.oktell_duration as call_eff_billsec_exact,
-            ccd.oktell_anti_robot as call_eff_robo_detected,
-            lv_op.username as lv_username,
-            group_offer.name as category_name,
-            pt.webmaster_id as call_eff_affiliate_id
-        FROM partners_atscallevent pae FORCE INDEX (calldate, lvlead_id)
-        INNER JOIN partners_lvlead lv FORCE INDEX (tl_id, operator_id) ON pae.lvlead_id = lv.id
-        INNER JOIN partners_tllead pt FORCE INDEX (external_id_2, offer_id, affiliate_id) ON lv.tl_id = pt.external_id
-        INNER JOIN partners_offer po FORCE INDEX (PRIMARY) ON pt.offer_id = po.id
-        INNER JOIN partners_assignedoffer assigned_offer ON assigned_offer.offer_id = po.id
-        INNER JOIN partners_groupoffer group_offer ON assigned_offer.group_id = group_offer.id
-        LEFT JOIN crm_call_calldata ccd ON ccd.id = pae.assigned_call_data_id
-        LEFT JOIN partners_lvoperator lv_op FORCE INDEX (PRIMARY) ON lv_op.id = pae.lvoperator_id
-        LEFT JOIN partners_userbasedonlvoperator pu ON pu.operator_id = pae.lvoperator_id
-        LEFT JOIN users_user uu ON uu.id = pu.user_id
-        LEFT JOIN users_department ud ON ud.id = uu.department_id
-        LEFT JOIN partners_subsystem subsystem ON subsystem.id = pt.subsystem_id
-        LEFT JOIN crm_call_oktelltask ccot ON pae.oktell_task_id = ccot.id
-        WHERE 1=1
-        AND pae.calldate BETWEEN %s AND %s
-        AND pae.billsec >= 30
-        AND group_offer.name NOT IN ({})
-        AND po.id IS NOT NULL
-        AND lv_op.username IS NOT NULL
-        AND ((ud.name LIKE '%%_НП_%%' OR ud.name LIKE '%%_СП_%%') OR ccot.type = 'new_sales')
+            SELECT
+                pae.id AS call_eff_id,
+                ccd.id AS call_eff_crm_id,
+                po.id AS call_eff_offer_id,
+                po.name AS offer_name,
+                pae.uniqueid AS call_eff_uniqueid,
+                LEFT(DATE_ADD(pae.calldate, INTERVAL 3 HOUR), 10) AS call_eff_calldate,
+                ccd.crm_lead_id AS call_eff_crm_lead_id,
+                uu.id AS call_eff_operator_id,
+                pae.billsec AS call_eff_billsec,
+                ccd.oktell_duration AS call_eff_billsec_exact,
+                ccd.oktell_anti_robot AS call_eff_robo_detected,
+                lv_op.username AS lv_username,
+                group_offer.name AS category_name,
+                pt.webmaster_id AS call_eff_affiliate_id
+            FROM partners_atscallevent pae
+            INNER JOIN partners_lvlead lv ON pae.lvlead_id = lv.id
+            INNER JOIN partners_tllead pt ON lv.tl_id = pt.external_id
+            INNER JOIN partners_offer po ON pt.offer_id = po.id
+            INNER JOIN partners_assignedoffer assigned_offer ON assigned_offer.offer_id = po.id
+            INNER JOIN partners_groupoffer group_offer ON assigned_offer.group_id = group_offer.id
+            LEFT JOIN crm_call_calldata ccd ON ccd.id = pae.assigned_call_data_id
+            LEFT JOIN partners_lvoperator lv_op ON lv_op.id = pae.lvoperator_id
+            LEFT JOIN partners_userbasedonlvoperator pu ON pu.operator_id = pae.lvoperator_id
+            LEFT JOIN users_user uu ON uu.id = pu.user_id
+            LEFT JOIN users_department ud ON ud.id = uu.department_id
+            LEFT JOIN partners_subsystem subsystem ON subsystem.id = pt.subsystem_id
+            LEFT JOIN crm_call_oktelltask ccot ON pae.oktell_task_id = ccot.id
+            WHERE 1=1
+              AND pae.calldate BETWEEN %s AND %s
+              AND pae.billsec >= 30
+              AND group_offer.name NOT IN ({})
+              AND po.id IS NOT NULL
+              AND lv_op.username IS NOT NULL
+              AND (
+                    ud.name LIKE '%%_НП_%%'
+                    OR ud.name LIKE '%%_СП_%%'
+                    OR ccot.type = 'new_sales'
+              )
         """.format(",".join(["%s"] * len(DBService.EXCLUDED_CATEGORIES)))
 
         params = [date_from, date_to] + DBService.EXCLUDED_CATEGORIES
