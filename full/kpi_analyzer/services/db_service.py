@@ -200,33 +200,61 @@ class DBService:
                 lv_op.username AS lv_username,
                 group_offer.name AS category_name,
                 pt.webmaster_id AS call_eff_affiliate_id
+
             FROM partners_atscallevent pae
-            INNER JOIN partners_lvlead lv ON pae.lvlead_id = lv.id
-            INNER JOIN partners_tllead pt ON lv.tl_id = pt.external_id
-            INNER JOIN partners_offer po ON pt.offer_id = po.id
-            INNER JOIN partners_assignedoffer assigned_offer ON assigned_offer.offer_id = po.id
-            INNER JOIN partners_groupoffer group_offer ON assigned_offer.group_id = group_offer.id
-            LEFT JOIN crm_call_calldata ccd ON ccd.id = pae.assigned_call_data_id
-            LEFT JOIN partners_lvoperator lv_op ON lv_op.id = pae.lvoperator_id
-            LEFT JOIN partners_userbasedonlvoperator pu ON pu.operator_id = pae.lvoperator_id
-            LEFT JOIN users_user uu ON uu.id = pu.user_id
-            LEFT JOIN users_department ud ON ud.id = uu.department_id
-            LEFT JOIN partners_subsystem subsystem ON subsystem.id = pt.subsystem_id
-            LEFT JOIN crm_call_oktelltask ccot ON pae.oktell_task_id = ccot.id
+            LEFT JOIN crm_call_calldata ccd
+                ON ccd.id = pae.assigned_call_data_id
+
+            LEFT JOIN partners_lvlead lv
+                ON pae.lvlead_id = lv.id
+
+            LEFT JOIN crm_leads_crmlead crm_lead
+                ON crm_lead.lvlead_id = lv.id
+
+            LEFT JOIN partners_lvoperator lv_op
+                ON lv_op.id = pae.lvoperator_id
+
+            LEFT JOIN partners_userbasedonlvoperator pu
+                ON pu.operator_id = pae.lvoperator_id
+
+            LEFT JOIN users_user uu
+                ON uu.id = pu.user_id
+
+            LEFT JOIN users_department ud
+                ON ud.id = uu.department_id
+
+            LEFT JOIN partners_tllead pt
+                ON lv.tl_id = pt.external_id
+
+            LEFT JOIN partners_subsystem subsystem
+                ON subsystem.id = pt.subsystem_id
+
+            LEFT JOIN partners_offer po
+                ON pt.offer_id = po.id
+
+            LEFT JOIN partners_assignedoffer assigned_offer
+                ON assigned_offer.offer_id = po.id
+
+            LEFT JOIN partners_groupoffer group_offer
+                ON assigned_offer.group_id = group_offer.id
+
+            LEFT JOIN crm_call_oktelltask ccot
+                ON pae.oktell_task_id = ccot.id
+
             WHERE 1=1
-              AND pae.calldate BETWEEN %s AND %s
-              AND pae.billsec >= 30
-              AND group_offer.name NOT IN ({})
+              AND pae.billsec >= 60
+              AND (ud.name LIKE '%_НП_%' OR ud.name LIKE '%_СП_%')
               AND po.id IS NOT NULL
               AND lv_op.username IS NOT NULL
-              AND (
-                    ud.name LIKE '%%_НП_%%'
-                    OR ud.name LIKE '%%_СП_%%'
-                    OR ccot.type = 'new_sales'
-              )
+              AND group_offer.name NOT IN ({})
         """.format(",".join(["%s"] * len(DBService.EXCLUDED_CATEGORIES)))
 
-        params = [date_from, date_to] + DBService.EXCLUDED_CATEGORIES
+        params = list(DBService.EXCLUDED_CATEGORIES)
+
+        # Оригинальная логика по дате — через DATE_SUB
+        query += " AND pae.calldate >= DATE_SUB(%s, INTERVAL 3 HOUR)"
+        query += " AND pae.calldate < DATE_SUB(%s, INTERVAL 3 HOUR)"
+        params += [date_from, date_to]
 
         if categories and categories != ['']:
             placeholders, cat_params = DBService._prepare_in_values(categories)
