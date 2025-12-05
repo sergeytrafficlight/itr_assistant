@@ -243,7 +243,7 @@ class DBService:
 
             WHERE 1=1
               AND pae.billsec >= 60
-              AND (ud.name LIKE '%_НП_%' OR ud.name LIKE '%_СП_%')
+              AND (ud.name LIKE '%%_НП_%%' OR ud.name LIKE '%%_СП_%%')
               AND po.id IS NOT NULL
               AND lv_op.username IS NOT NULL
               AND group_offer.name NOT IN ({})
